@@ -53,20 +53,28 @@ VectorDB : Chromadb & Qdrant
 To use the project, you'll have to do some preprocessing (if you want to use the query_ui feature otherwise skip these Phase1 and Phase2) : <br>
 ## Step 1.
 ### Phase 1
+[for Query UI Tool]
 1. Find **scraper.py** in root dir, run it like `python -m python.scraper https://url`
 2. It would make data/website_snapshots/your_webpage.json
 
-### Phase 2
-1. Find **flattenNindex.py**
-2. Run it like :  `flattenNindex.py [-h] [--page PAGE] [--desc DESC] [--db DB] [--query QUERY] snapshot_file`<br>
+3. Find **flattenNindex.py**
+4. Run it like :  `flattenNindex.py [-h] [--page PAGE] [--desc DESC] [--db DB] [--query QUERY] snapshot_file`<br>
   `--page` is the string html pagename that is shown to user <br>
   `--desc` is the short page description, currently useless, but useful for giving the agent particular webpage context<br>
   `--db` is string db name (optional)<br>
   `--query` is the string for a particular feature (optional)<br>
-  `snapshot_file` is the path to the json file we just created<br>
+  `snapshot_file` is the path to the json file we just created<br><br>
+  **Remember**
   - **you provide --query only when you want to test what the database retrieves otherwise leave**<br>
   - **Remember that you can provide collection name in this file by line `COLLECTION_NAME = "ui_elements"`** 
 -  **If you provide collection name (default ui_elements), then change this line: `                        "enum": ["ui_elements"]` in root/python/agent.py**<br>
+  
+### Phase 2
+[for Search Products Tool]
+1. Fill your Database `online_store`
+2. Run Qdrant [use defualt ports] in Docker and your SQL Database
+3. Find fill_db.py and run it like `python -m python.fill_db full_url`
+4. It will Cache Product related details, for Fuzzy name matching.
 
    
 ## Step 2.

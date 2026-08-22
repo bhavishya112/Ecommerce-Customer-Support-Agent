@@ -16,7 +16,7 @@ def create_connection():
         connection = pymysql.connect(
             host="localhost",
             user="root",
-            password="bh4v1shy4",  # Leave empty if no password
+            password="",  # Leave empty if no password
             database="online_store",
             cursorclass=pymysql.cursors.DictCursor,  # Optional: returns rows as dicts
             autocommit=False,  # Optional: you can change this

@@ -203,18 +203,21 @@ TOOLS = [
                                 "type": "string"
                             },
                             "price": {
-                                "type": "object",
-                                "properties": {
-                                    "operator": {
-                                        "type": "string",
-                                        "enum": ["lt", "gt", "et"]
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "operator": {
+                                            "type": "string",
+                                            "enum": ["lt", "gt", "et"]
+                                        },
+                                        "value": {
+                                            "type": "number"
+                                        }
                                     },
-                                    "value": {
-                                        "type": "number"
-                                    }
-                                },
-                                "required": ["operator", "value"],
-                                "additionalProperties": False
+                                    "required": ["operator", "value"],
+                                    "additionalProperties": False
+                                }
                             },
                             "supplier": {
                                 "type": "string"
@@ -281,7 +284,7 @@ CONVERSATIONS: dict[int, dict[int, list]] = dict()
 
 def add_or_update_conv(message: list[dict[str, str]], user_id: int, conv_id: int):
     """Adds Messages in the Server Level Pool of messages.
-    
+
     Args:
         message (list): LLM style messages of the form [{"role":"user","content":"hi"}...]
         user_id (int): php backend set integer user id
@@ -323,6 +326,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.post("/chat")
 async def chat(req: ChatRequest):

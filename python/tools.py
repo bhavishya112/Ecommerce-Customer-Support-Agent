@@ -172,7 +172,7 @@ def query_ui(
         result = ""
         for data in matches:
             for x in data:
-                if x == "size" :
+                if x == "size":
                     data[x] = json.loads(data[x])
                 result += f"{x} : {data[x]}|"
                 # print(f"{x} : {data[x]}")
@@ -188,7 +188,7 @@ def query_ui(
 
 # =================================DATABASE TOOLS=========================================================================
 
-SEARCH_SCORE_THRESHOLD = 0.7 # filter vectordb retrieval results 
+SEARCH_SCORE_THRESHOLD = 0.7  # filter vectordb retrieval results
 SEARCH_LIMIT = 10   # no. of webpages to return by web_search tool
 SEARCH_FIELD_MAP = {    # its currently useless, but keep it here for stability
     "name": "name",
@@ -234,11 +234,11 @@ def search_products(query: dict):
     {
         "name":string,
         "category":string,
-        "price": 
+        "price": [
         {
             "operator" : ["lt","gt","et"],
             "value" : float
-        },
+        }],
         "supplier" : "string"
     }
 
@@ -264,9 +264,11 @@ def search_products(query: dict):
         name = corrected_query.get("name")
         category = corrected_query.get("category")
         price = query.get("price", {})
-        op = price.get("operator")
-        value = price.get("value")
-        supplier = corrected_query.get("supplier")
+
+        for p in price:
+            op = p.get("operator")
+            value = p.get("value")
+            supplier = corrected_query.get("supplier")
 
         conditions = []
         params = []
@@ -280,19 +282,27 @@ def search_products(query: dict):
         if supplier:
             _append_text_condition(conditions, params, "supplier", supplier)
 
-        if price and value is not None:
-            if op == "lt":
-                conditions.append("price < %s")
-            elif op == "gt":
-                conditions.append("price > %s")
-            elif op == "et":
-                conditions.append("price = %s")
-            params.append(value)
-
+        for p in price:
+            # print("⚡p:",p)  
+            # print("o : ",o,"v : ",v)
+            o = p.get('operator')
+            v = p.get('value')
+            if o and v is not None:
+                if o == "lt":
+                    conditions.append("price < %s")
+                if o == "gt":
+                    conditions.append("price > %s")
+                elif o == "et":
+                    conditions.append("price = %s")
+                params.append(v)
+        print("⚡params : ",params)
+        print(" ⚡ conditions : ",conditions)
+        print("⚡conditions : ", conditions)
         q = "SELECT name, category, price, supplier FROM products"
         if conditions:
             q += " WHERE " + " AND ".join(conditions)
 
+        print("⚡query : ", q)
         cursor.execute(q, params)
 
         results = cursor.fetchall()
