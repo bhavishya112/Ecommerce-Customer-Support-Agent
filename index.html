@@ -607,7 +607,7 @@ async function sendQuery() {
     try {
         abortController = new AbortController();
         isStopped = false;
-        const response = await fetch("http://127.0.0.1:8000/backend.php", {
+        const response = await fetch("http://localhost:8000/backend.php", {
             signal: abortController.signal,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

@@ -1,3 +1,4 @@
+from sentence_transformers import SentenceTransformer
 from typing import Literal
 import json
 import chromadb
@@ -8,7 +9,7 @@ from pymysql import Error
 from pymysql.cursors import DictCursor
 from python.db_connection import create_connection, create_qdrant_connection
 from python.fill_db import FIELD_COLLECTIONS, embed_text
-
+from langfuse import observe
 
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
@@ -24,6 +25,7 @@ logger.addHandler(handler)
 logger.propagate = False
 
 
+@observe(as_type="tool", name="web_search")
 def web_search(query: str, num_results: int = 5) -> str:
     """
     Search the web and return formatted results.
@@ -76,6 +78,7 @@ client = OpenAI(
 )
 
 
+@observe(as_type="tool", name="summarize")
 def summarize(text: str, query: str | None = None) -> str:
     """
     Summarize the given text using DeepSeek-R1:1.5B running on Ollama.
@@ -123,6 +126,7 @@ def summarize(text: str, query: str | None = None) -> str:
 
 
 openaiclient = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+# EMBEDDER = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 MODEL_NAME = "all-minilm:l6-v2"
 # COLLECTION_NAME = "ui_elements"
@@ -131,7 +135,7 @@ VECTORDB_PATH = "data/vectordb/ui_vector_db2"
 
 # vectordb path for querying ui
 
-
+@observe(as_type="tool", name="query_ui")
 def query_ui(
     question: str,
     top_k: int = 5,
@@ -158,6 +162,7 @@ def query_ui(
             input=question, model=MODEL_NAME)
         embedding = [emb.embedding for emb in response.data]
 
+        # embedding = EMBEDDER.encode(question).tolist()
         results = collection.query(
             query_embeddings=embedding, n_results=top_k, where={"view": view}
         )
@@ -197,6 +202,7 @@ SEARCH_FIELD_MAP = {    # its currently useless, but keep it here for stability
 }
 
 
+@observe(as_type="tool", name="get_order")
 def get_order(order_id: str):
     """Fetch order details for a given order ID.
 
@@ -223,6 +229,7 @@ def get_order(order_id: str):
             conn.close()
 
 
+@observe(as_type="tool", name="search_products")
 def search_products(query: dict):
     """Search products using optional text and numeric filters.
 
@@ -264,11 +271,7 @@ def search_products(query: dict):
         name = corrected_query.get("name")
         category = corrected_query.get("category")
         price = query.get("price", {})
-
-        for p in price:
-            op = p.get("operator")
-            value = p.get("value")
-            supplier = corrected_query.get("supplier")
+        supplier = corrected_query.get("supplier")
 
         conditions = []
         params = []
@@ -283,7 +286,7 @@ def search_products(query: dict):
             _append_text_condition(conditions, params, "supplier", supplier)
 
         for p in price:
-            # print("⚡p:",p)  
+            # print("⚡p:",p)
             # print("o : ",o,"v : ",v)
             o = p.get('operator')
             v = p.get('value')
@@ -295,8 +298,8 @@ def search_products(query: dict):
                 elif o == "et":
                     conditions.append("price = %s")
                 params.append(v)
-        print("⚡params : ",params)
-        print(" ⚡ conditions : ",conditions)
+        print("⚡params : ", params)
+        print(" ⚡ conditions : ", conditions)
         print("⚡conditions : ", conditions)
         q = "SELECT name, category, price, supplier FROM products"
         if conditions:
@@ -324,6 +327,7 @@ def search_products(query: dict):
             conn.close()
 
 
+@observe(as_type="tool", name="get_product")
 def get_product(product_id: str):
     """Fetch product details by product_id."""
     conn = None
