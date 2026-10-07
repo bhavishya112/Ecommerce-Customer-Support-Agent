@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 from python.tools import web_search, query_ui, get_order, get_product, search_products
 import pprint
-from openai import OpenAI
+from langfuse import observe, propagate_attributes, get_client
+from langfuse.openai import OpenAI
 from typing import Callable
 from threading import Thread
 from pydantic import BaseModel
@@ -109,7 +110,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "query_ui",
-            "description": """Gets UI context. Helps with our website navigation. First Ask which device user is on.  Do not add anything by yourself.
+            "description": """Gets UI context. Use it ONLY when user ask about navigation on our website. Helps with our website navigation. First Ask which device user is on.  Do not add anything by yourself.
             your answer must necessarily be like : 'Go to middle of the page a wide grid of blue boxes would appear' or 'go to profile > settings > notification'
             Remember DO NOT reveal dynamic text like student name or applications ids """,
             "parameters": {
@@ -249,6 +250,7 @@ AVAILABLE_TOOLS: dict[str, Callable] = {
 # ------------------------------------------------------------------
 # Executes tool calls returned by the LLM (Not to be modified with new tool)
 # ------------------------------------------------------------------
+@observe(as_type="tool", name="tool_runner")
 def run_tool(tool_name, **args) -> str:
     """
     Executes tool calls
@@ -309,6 +311,7 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
     api_key=GROQ_API_KEY,
 )
+langfuse = get_client()
 
 MAX_ITERATIONS = 5  # Max React Cycle Loop Limit
 MODEL = "openai/gpt-oss-20b"
@@ -360,6 +363,7 @@ async def chat(req: ChatRequest):
 #                                               AGENT
 # ======================================================================================================================
 
+@observe(as_type="agent", name="ecommerce-support-agent")
 def Agent(model: str, req: ChatRequest, emit: Callable):
     """This function drives the Agentic flow
     Args:
@@ -367,7 +371,13 @@ def Agent(model: str, req: ChatRequest, emit: Callable):
         req (ChatRequest): the request object from php backend
         emit (QueueEmitter): SSE events are piped to their correct place via calling this function"""
     try:
-        system_prompt = """
+        with propagate_attributes(
+            user_id=str(req.user_id),
+            session_id=str(req.conv_id),
+            tags=["customer-support-agent", "react-agent"],
+            metadata={"user_id": req.user_id, "conv_id": req.conv_id}
+        ):
+            system_prompt = """
         You are helpful chatbot for our customers, you can take multiple turns if a tool call fails
         UI information may ONLY come from tool outputs.
         IMPORTANT : For ui related queries, provide full information such as size,position,color, flow like myprofile>billing>details
@@ -579,6 +589,9 @@ def Agent(model: str, req: ChatRequest, emit: Callable):
 
     except Exception as E:
         emit("error", {"token": str(E)})
+
+    finally:
+        langfuse.flush()
 
     # def main():
     #     try:

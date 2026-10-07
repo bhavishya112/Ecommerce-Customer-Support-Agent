@@ -170,15 +170,9 @@ dependencies:
   - opencl-headers=2025.07.22=h885b0b7_0
   - openjpeg=2.5.2=hae555c5_0
   - openssl=3.6.3=hf411b9b_0
-  - opentelemetry-api=1.38.0=py311haa95532_0
-  - opentelemetry-exporter-otlp-proto-common=1.38.0=py311haa95532_0
-  - opentelemetry-exporter-otlp-proto-grpc=1.38.0=py311haa95532_0
   - opentelemetry-instrumentation=0.59b0=py311haa95532_0
   - opentelemetry-instrumentation-asgi=0.59b0=py311haa95532_0
   - opentelemetry-instrumentation-fastapi=0.59b0=py311haa95532_0
-  - opentelemetry-proto=1.38.0=py311haa95532_0
-  - opentelemetry-sdk=1.38.0=py311haa95532_0
-  - opentelemetry-semantic-conventions=0.59b0=py311haa95532_0
   - opentelemetry-util-http=0.59b0=py311haa95532_0
   - optree=0.18.0=py311h03f52e7_0
   - orjson=3.11.7=py311h51239a8_0
@@ -316,11 +310,21 @@ dependencies:
       - httplib2==0.32.0
       - huggingface-hub==0.36.2
       - ir-datasets==0.6.2
+      - langfuse==4.16.0
       - lz4==4.4.5
       - ml-dtypes==0.5.4
       - multiprocess==0.70.19
       - numpy==1.26.4
       - onnx==1.22.0
+      - opentelemetry-api==1.45.0
+      - opentelemetry-exporter-http-transport==0.66b0
+      - opentelemetry-exporter-otlp-common==0.66b0
+      - opentelemetry-exporter-otlp-proto-common==1.45.0
+      - opentelemetry-exporter-otlp-proto-grpc==1.45.0
+      - opentelemetry-exporter-otlp-proto-http==1.45.0
+      - opentelemetry-proto==1.45.0
+      - opentelemetry-sdk==1.45.0
+      - opentelemetry-semantic-conventions==0.66b0
       - pandas==3.0.3
       - peft==0.17.1
       - pillow==12.3.0
