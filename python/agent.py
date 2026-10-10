@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# from . import tracing
 from python.tools import web_search, query_ui, get_order, get_product, search_products
 import pprint
 from langfuse import observe, propagate_attributes, get_client
@@ -87,7 +88,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Searches the internet for information using Google-like queries. Use only when user wants up-to-date information, not otherwise. Always Preserve URL references with text",
+            "description": "Searches the internet for information using Google-like queries. Use only when user wants upto-date info and not searching any products, not otherwise. Always Preserve URL references with text",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -190,7 +191,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_products",
-            "description": "Search products using query variables.",
+            "description": "Search products in our product inventory using query variables. sort is ASC by default. the results are paginated and use cur (cursor) to remember position. (by defualt empty string)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -222,14 +223,21 @@ TOOLS = [
                             },
                             "supplier": {
                                 "type": "string"
+                            },
+                            "sort": {
+                                "type": "string",
+                                "enum": ["ASC", "DESC"],
                             }
                         },
-                        "required": ["name", "category", "price", "supplier"],
+                        "required": ["name", "category", "price", "supplier", "sort"],
                         "additionalProperties": False
 
+                    },
+                    "cur": {
+                        "type": "string"
                     }
                 },
-                "required": ["query"],
+                "required": ["query", "cur"],
                 "additionalProperties": False
             },
             "strict": True
@@ -298,7 +306,7 @@ def add_or_update_conv(message: list[dict[str, str]], user_id: int, conv_id: int
     else:
         CONVERSATIONS[user_id][conv_id].extend(message)
         CONVERSATIONS[user_id][conv_id] = CONVERSATIONS[user_id][conv_id][-5:]
-    logger.info("⚠️ [CONVERSATIONS] : %s", CONVERSATIONS)
+    logger.info("⚠️ [CONVERSATIONS] : %s", json.dumps(CONVERSATIONS, indent=4))
 
 # ---------------------------------------------------------------------------------------------------
 
@@ -307,6 +315,7 @@ def add_or_update_conv(message: list[dict[str, str]], user_id: int, conv_id: int
 #     base_url="http://localhost:11434/v1",
 #     api_key="",
 # )
+
 client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
     api_key=GROQ_API_KEY,
@@ -592,6 +601,7 @@ def Agent(model: str, req: ChatRequest, emit: Callable):
 
     finally:
         langfuse.flush()
+        # tracing.provider.force_flush()
 
     # def main():
     #     try:

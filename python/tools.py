@@ -10,6 +10,10 @@ from pymysql.cursors import DictCursor
 from python.db_connection import create_connection, create_qdrant_connection
 from python.fill_db import FIELD_COLLECTIONS, embed_text
 from langfuse import observe
+import base64
+import json
+from typing import Optional
+
 
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
@@ -229,8 +233,41 @@ def get_order(order_id: str):
             conn.close()
 
 
+def _encode_cursor(product_id: str, price: float) -> str:
+    """Encode pagination state into an opaque cursor string."""
+    payload = {
+        "pid": product_id,
+        "p": round(price, 2),  # avoid float precision issues
+    }
+    raw = json.dumps(payload, separators=(",", ":"),
+                     default=str).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: Optional[str]) -> Optional[dict]:
+    """Decode and validate a cursor. Returns {"product_id","price"} ...None if invalid/missing."""
+    if not cursor:
+        return None
+    try:
+        # Restore padding stripped during encoding
+        padded = cursor + "=" * (-len(cursor) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        payload = json.loads(raw.decode("utf-8"))
+
+        # Validate required fields & types
+        pid = payload["pid"]
+        p = float(payload["p"])
+
+        if not isinstance(pid, str):
+            return None
+
+        return {"product_id": pid, "price": p}
+    except (KeyError, ValueError, TypeError, Exception):
+        return None
+
+
 @observe(as_type="tool", name="search_products")
-def search_products(query: dict):
+def search_products(query: dict, cur: str = None):
     """Search products using optional text and numeric filters.
 
     Uses vector-expanded fuzzy matching for name, category, and supplier fields
@@ -244,9 +281,11 @@ def search_products(query: dict):
         "price": [
         {
             "operator" : ["lt","gt","et"],
-            "value" : float
+            "value" : float,   
         }],
-        "supplier" : "string"
+        "supplier" : "string",
+        "sort" : ["ASC","DESC"]
+
     }
 
     Returns:
@@ -272,6 +311,7 @@ def search_products(query: dict):
         category = corrected_query.get("category")
         price = query.get("price", {})
         supplier = corrected_query.get("supplier")
+        sort = query.get("sort", "ASC")
 
         conditions = []
         params = []
@@ -286,8 +326,6 @@ def search_products(query: dict):
             _append_text_condition(conditions, params, "supplier", supplier)
 
         for p in price:
-            # print("⚡p:",p)
-            # print("o : ",o,"v : ",v)
             o = p.get('operator')
             v = p.get('value')
             if o and v is not None:
@@ -298,12 +336,23 @@ def search_products(query: dict):
                 elif o == "et":
                     conditions.append("price = %s")
                 params.append(v)
-        print("⚡params : ", params)
-        print(" ⚡ conditions : ", conditions)
-        print("⚡conditions : ", conditions)
-        q = "SELECT name, category, price, supplier FROM products"
+
+        if cur:
+            pid, pr = _decode_cursor(cur).values()
+            pr = float(pr)
+
+            if sort == "ASC":
+                conditions.append("(price,product_id) > (%s,%s)")
+            else:
+                conditions.append("(price,product_id) < (%s,%s)")
+            params.extend([pr, pid])
+
+        q = "SELECT product_id, name, category, price, supplier FROM products"
         if conditions:
             q += " WHERE " + " AND ".join(conditions)
+
+        # LIMIT TO BE CHANGED FROM 5
+        q += f" ORDER BY price {sort}, product_id {sort} LIMIT 5"
 
         print("⚡query : ", q)
         cursor.execute(q, params)
@@ -313,8 +362,10 @@ def search_products(query: dict):
         logger.info("[search_products] ✅ Successful!")
         logger.info("[RESULTS] : %s", results)
         if results:
+            new_cur = _encode_cursor(
+                results[-1]["product_id"], results[-1]["price"])
 
-            return results
+            return {"results": results, "cursor": new_cur}
 
         return {"message": f"No products found for the query {q} : {params}"}
 

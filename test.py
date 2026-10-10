@@ -209,7 +209,7 @@ vectordbclient = create_qdrant_connection()
 
 # print(search_products( {'category': 'gpu','price': [{'operator': 'gt', 'value': 300},{'operator': 'lt', 'value': 700}], 'supplier': ''}))
 print(search_products({'category': 'graphics card',
-      'name': 'nvidia', 'price': [], 'supplier': ''}))
+      'name': 'nvidia', 'price': [], 'supplier': ''}, ""))
 
 # print(_vector_matches_for_field(vectordbclient,"supplier","Intel"))
 # from python.fill_db import fetch_product_field_values
