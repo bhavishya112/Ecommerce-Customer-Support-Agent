@@ -18,3 +18,5 @@ data
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,archive,vs
 Agentik-pip
 
+browser_profile/
+

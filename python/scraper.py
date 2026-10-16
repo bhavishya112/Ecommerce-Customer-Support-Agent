@@ -4,151 +4,197 @@ import json
 from playwright.sync_api import sync_playwright
 
 
-def extract_ui_tree(url:str):
+def extract_ui_tree(url: str):
     """Renders the page using Playwright and extracts DOM tree from mobile (360x414) and desktop (1280x720) perspectives
     Args:
         url (str): the full url string of the webpage, can be any webpage from any host or localhost runnable in browser
     Returns:
         DOM tree (dict)"""
-    
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url)
-
-        # Wait for the network to be idle to ensure the UI is fully rendered
-        # page.wait_for_load_state("domcontentloaded")
-
-        # Recursive JS function executed in the browser context
-        ui_tree_json = page.evaluate("""() => {
-    const parseNode = (element) => {
-
-    
-        if (!element) return null;
-                                     
-        const rect = element.getBoundingClientRect();
-
-        //Readable Position----------------------------
-        const x = rect.left + window.scrollX;
-        const y = rect.top + window.scrollY;
-
-        const pageWidth = document.documentElement.scrollWidth;
-        const pageHeight = document.documentElement.scrollHeight;
-
-        // Horizontal thirds
-        let horiz;
-        if (x < pageWidth / 3) horiz = "left";
-        else if (x < (2 * pageWidth) / 3) horiz = "center";
-        else horiz = "right";
-
-        // Vertical thirds
-        let vert;
-        if (y < pageHeight / 3) vert = "top";
-        else if (y < (2 * pageHeight) / 3) vert = "middle";
-        else vert = "bottom";
-        //---------------------------------------
-
-        const innerText = element.innerText || "";
-        // Construct the base properties of the current UI element
-        const nodeData = {
-            view: "desktop",
-            tagName: element.tagName.toLowerCase(),
-            id: element.id || null,
-            className: element.className || null,
-            role: element.getAttribute('role') || null,
-            text: innerText.trim(),
-            position : vert + "-" + horiz,
-            size : { width: Math.round((rect.width/100)*2.54), height: Math.round((rect.height/100)*2.54) },
-            visible : !!(element.offsetParent !== null && rect.width > 0 && rect.height > 0),
-            color : getComputedStyle(element).color,
-            children: []
-        };
-
-        // Recursively parse each child element to build the branch
-        for (const child of element.children) {
-            const childTree = parseNode(child);
-            if (childTree) {
-                nodeData.children.push(childTree);
-            }
-        }
-        
-        return nodeData;
-    };
-
-    // Start parsing from the body tag
-    return parseNode(document.body);
-}""")
-        browser.close()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"height": 360, "width": 414})
-        page.goto(url)
+        try:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir="./browser_profile",
+                headless=True,
+                viewport={"width": 1280, "height": 720}
+            )
 
-        # Wait for the network to be idle to ensure the UI is fully rendered
-        # page.wait_for_load_state("domcontentloaded")
+            if context.pages:
+                page = context.pages[0]
+            else:
+                raise (Exception("you're not logged in sorry."))
 
-        # Recursive JS function executed in the browser context
-        ui_tree_json2 = page.evaluate("""() => {
-    const parseNode = (element) => {
-        if (!element) return null;
-        
-        const rect = element.getBoundingClientRect();
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+
+            # Wait for the page to finish rendering.
+            page.wait_for_timeout(3000)
+
+            # Wait for the network to be idle to ensure the UI is fully rendered
+            # page.wait_for_load_state("domcontentloaded")
+
+            # Recursive JS function executed in the browser context
+            ui_tree_json1 = page.evaluate("""() => {
+            const parseNode = (element) => {
+
+            
+                if (!element) return null;
+                                            
+                const rect = element.getBoundingClientRect();
 
                 //Readable Position----------------------------
-        const x = rect.left + window.scrollX;
-        const y = rect.top + window.scrollY;
+                const x = rect.left + window.scrollX;
+                const y = rect.top + window.scrollY;
 
-        const pageWidth = document.documentElement.scrollWidth;
-        const pageHeight = document.documentElement.scrollHeight;
+                const pageWidth = document.documentElement.scrollWidth;
+                const pageHeight = document.documentElement.scrollHeight;
 
-        // Horizontal thirds
-        let horiz;
-        if (x < pageWidth / 3) horiz = "left";
-        else if (x < (2 * pageWidth) / 3) horiz = "center";
-        else horiz = "right";
+                // Horizontal thirds
+                let horiz;
+                if (x < pageWidth / 3) horiz = "left";
+                else if (x < (2 * pageWidth) / 3) horiz = "center";
+                else horiz = "right";
 
-        // Vertical thirds
-        let vert;
-        if (y < pageHeight / 3) vert = "top";
-        else if (y < (2 * pageHeight) / 3) vert = "middle";
-        else vert = "bottom";
-        //---------------------------------------
-        
-        const innerText = element.innerText || "";
-        // Construct the base properties of the current UI element
-        const nodeData = {
-            view : "mobile",
-            tagName: element.tagName.toLowerCase(),
-            id: element.id || null,
-            className: element.className || null,
-            role: element.getAttribute('role') || null,
-            text: innerText.trim(),
-            visible : !!(element.offsetParent !== null && rect.width > 0 && rect.height > 0),
-            position :vert + "-" + horiz,
-            size :{ width: Math.round((rect.width/400)*2.54), height: Math.round((rect.height/400)*2.54) },
-            color : getComputedStyle(element).color,
-            children: []
-        };
+                // Vertical thirds
+                let vert;
+                if (y < pageHeight / 3) vert = "top";
+                else if (y < (2 * pageHeight) / 3) vert = "middle";
+                else vert = "bottom";
+                //---------------------------------------
 
-        // Recursively parse each child element to build the branch
-        for (const child of element.children) {
-            const childTree = parseNode(child);
-            if (childTree) {
-                nodeData.children.push(childTree);
-            }
-        }
-        
-        return nodeData;
-    };
+                const innerText = element.innerText || "";
+                // Construct the base properties of the current UI element
+                const nodeData = {
+                    view: "desktop",
+                    tagName: element.tagName.toLowerCase(),
+                    id: element.id || null,
+                    className: element.className || null,
+                    role: element.getAttribute('role') || null,
+                    text: innerText.trim(),
+                    position : vert + "-" + horiz,
+                    size : { width: Math.round((rect.width/100)*2.54), height: Math.round((rect.height/100)*2.54) },
+                    visible : !!(element.offsetParent !== null && rect.width > 0 && rect.height > 0),
+                    color : getComputedStyle(element).color,
+                    children: []
+                };
 
-    // Start parsing from the body tag
-    return parseNode(document.body);
-}""")
-        browser.close()
+                // Recursively parse each child element to build the branch
+                for (const child of element.children) {
+                    const childTree = parseNode(child);
+                    if (childTree) {
+                        nodeData.children.push(childTree);
+                    }
+                }
+                
+                return nodeData;
+            };
+
+            // Start parsing from the body tag
+            return parseNode(document.body);
+            }""")
+        except Exception as e:
+            print(e)
+        finally:
+            context.close()
+
+    with sync_playwright() as p:
+        try:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir="./browser_profile",
+                headless=False,
+                viewport={"width": 375, "height": 667},
+                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                is_mobile=True,
+                has_touch=True
+            )
+            
+            if context.pages:
+                page = context.pages[0]
+            else:
+                raise (Exception("you're not logged in sorry."))
+
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+
+            # Wait for the page to finish rendering.
+            page.wait_for_timeout(3000)
+
+
+            # Wait for the network to be idle to ensure the UI is fully rendered
+            # page.wait_for_load_state("domcontentloaded")
+
+            # Recursive JS function executed in the browser context
+            ui_tree_json2 = page.evaluate("""() => {
+            const parseNode = (element) => {
+
+            
+                if (!element) return null;
+                                            
+                const rect = element.getBoundingClientRect();
+
+                //Readable Position----------------------------
+                const x = rect.left + window.scrollX;
+                const y = rect.top + window.scrollY;
+
+                const pageWidth = document.documentElement.scrollWidth;
+                const pageHeight = document.documentElement.scrollHeight;
+
+                // Horizontal thirds
+                let horiz;
+                if (x < pageWidth / 3) horiz = "left";
+                else if (x < (2 * pageWidth) / 3) horiz = "center";
+                else horiz = "right";
+
+                // Vertical thirds
+                let vert;
+                if (y < pageHeight / 3) vert = "top";
+                else if (y < (2 * pageHeight) / 3) vert = "middle";
+                else vert = "bottom";
+                //---------------------------------------
+
+                const innerText = element.innerText || "";
+                // Construct the base properties of the current UI element
+                const nodeData = {
+                    view: "mobile",
+                    tagName: element.tagName.toLowerCase(),
+                    id: element.id || null,
+                    className: element.className || null,
+                    role: element.getAttribute('role') || null,
+                    text: innerText.trim(),
+                    position : vert + "-" + horiz,
+                    size : { width: Math.round((rect.width/100)*2.54), height: Math.round((rect.height/100)*2.54) },
+                    visible : !!(element.offsetParent !== null && rect.width > 0 && rect.height > 0),
+                    color : getComputedStyle(element).color,
+                    children: []
+                };
+
+                // Recursively parse each child element to build the branch
+                for (const child of element.children) {
+                    const childTree = parseNode(child);
+                    if (childTree) {
+                        nodeData.children.push(childTree);
+                    }
+                }
+                
+                return nodeData;
+            };
+
+            // Start parsing from the body tag
+            return parseNode(document.body);
+            }""")
+        except Exception as e:
+            print(e)
+        finally:
+            context.close()
 
     resTree = dict()
-    resTree["desktop"] = ui_tree_json
+    resTree["desktop"] = ui_tree_json1
     resTree["mobile"] = ui_tree_json2
 
     return resTree
@@ -157,8 +203,12 @@ def extract_ui_tree(url:str):
 # Example Usage
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="For Scraping Website UI in Json, for desktop and mobile"
+        description="For Scraping Website UI DOM Tree in Json File, both for desktop and mobile"
     )
+    parser.add_argument(
+        "name", help="name of the webpage"
+    )
+
     parser.add_argument(
         "url",
         help="url of the webpage"
@@ -172,6 +222,6 @@ if __name__ == "__main__":
 
     tree = extract_ui_tree(target_url)
     # print(json.dumps(tree, indent=2))
-    with open(f"data/website_snapshots/{page}.json", "w", encoding="utf-8") as f:
+    with open(f"data/website_snapshots/{args.name}.json", "w", encoding="utf-8") as f:
         json.dump(tree, f, indent=4, ensure_ascii=False)
-    print(f"✅ success\nresult : {page}.json is ready...")
+    print(f"✅ success\nresult : {args.name}.json is ready...")

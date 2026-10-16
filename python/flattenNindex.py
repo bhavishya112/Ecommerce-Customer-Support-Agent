@@ -26,7 +26,7 @@ from python.make_readable import color_readable
 logger = logging.getLogger(__name__)
 
 
-#----------------------------------------LOGGER----------------------------------------
+# ----------------------------------------LOGGER----------------------------------------
 logging.basicConfig(
     filename="logs/ai_backend.log",
     filemode="a",  # 'a' appends new logs; 'w' overwrites each run
@@ -35,12 +35,12 @@ logging.basicConfig(
     datefmt="%H:%M %d %B",
     encoding="utf-8",
 )
-#-----------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------
 
 openaiclient = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
 MODEL_NAME = "all-minilm:l6-v2"  # small, fast, good enough for UI-label matching
-COLLECTION_NAME = "ui_elements"
+COLLECTION_NAME = "amazon_customer"
 
 FULL_TEXT_TRUNCATE = 300  # cap on raw innerText stored in metadata
 
@@ -107,7 +107,7 @@ def _pseudo_selector(node: dict) -> str:
     return tag
 
 
-def flatten(node:dict, path:str, page: str, description: str, view="desktop", rows:list=None):
+def flatten(node: dict, path: str, page: str, description: str, view="desktop", rows: list = None):
     """
     Recursively Walks the nested children tree produced by the scraper.py
     and returns a flat list of dict rows, one per element
@@ -145,11 +145,11 @@ def flatten(node:dict, path:str, page: str, description: str, view="desktop", ro
             # "state": None,  # no AJAX/state discovery in the new scraper
             "full_text": (node.get("text") or "")[:FULL_TEXT_TRUNCATE],
             "visible": node.get("visible"),
+            "class_name": node.get("className"),
             # "path": current_path,
             # "tag": node.get("tagName"),
             # closest analogue to the old "type" field
             # "element_id": node.get("id"),
-            # "class_name": node.get("className"),
             # "selector": _pseudo_selector(node),
             # not provided by the new scraper
         }
@@ -187,12 +187,12 @@ def flatten_snapshot(snapshot: dict, page: str, description: str) -> list:
 # ---------------------------------------------------------------------------
 
 
-def build_index(rows: list[dict], db_path: str = "./data/vectordb/ui_vector_db2"):
+def build_index(rows: list[dict], db_path: str = "./data/vectordb/ui_vector_db"):
     """Stores the Flattened UI Tree into vectorDB.
     Args:
         rows (list) : The flattened ui tree in the form [{"page":"pagename","size_cm":n...}...]
         db_path (pathlike str) : the relative path to where the vectordb collection/data goes"""
-    
+
     client = chromadb.PersistentClient(path=db_path)
     collection = client.get_or_create_collection(COLLECTION_NAME)
 
@@ -217,11 +217,14 @@ def build_index(rows: list[dict], db_path: str = "./data/vectordb/ui_vector_db2"
     # embeddings = [emb.embedding for emb in response.data]
 
     ids = [r["id"] for r in rows]
+    # print(ids)
     metadatas = []
     for r in rows:
+        # print(r)
         # Chroma metadata values must be str/int/float/bool (or None)
         meta = dict(r)
         meta.pop("id", None)
+        # print(meta['id'])
         for key, value in meta.items():
             if value is None:
                 continue
@@ -238,7 +241,6 @@ def build_index(rows: list[dict], db_path: str = "./data/vectordb/ui_vector_db2"
 
         # print(traceback.print_exc())
     print(f"Indexed {len(rows)} elements into '{db_path}'")
-    
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +248,7 @@ def build_index(rows: list[dict], db_path: str = "./data/vectordb/ui_vector_db2"
 # ---------------------------------------------------------------------------
 
 
-def query(question: str, db_path: str = "data/vectordb/ui_vector_db2", top_k: int = 5):
+def query(question: str, db_path: str = "data/vectordb/ui_vector_db", top_k: int = 5):
     """this queries the vectordb for UI data and returns top_k matches with scores"""
     client = chromadb.PersistentClient(path=db_path)
     collection = client.get_or_create_collection(COLLECTION_NAME)
@@ -284,7 +286,7 @@ def main():
     )
     parser.add_argument(
         "--db",
-        default="./data/vectordb/ui_vector_db2",
+        default="./data/vectordb/ui_vector_db",
         help="Path to vector DB directory",
     )
     parser.add_argument(

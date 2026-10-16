@@ -89,7 +89,7 @@
 # from python.tools import search_products
 # import chromadb
 
-# client = chromadb.PersistentClient(path="data/vectordb/ui_vector_db2")
+# client = chromadb.PersistentClient(path="data/vectordb/ui_vector_db")
 # collection = client.list_collections()
 # print(collection)
 
@@ -127,7 +127,7 @@
 # from tools import query_ui
 
 
-# print(query_ui("dashboard",20,'desktop','ui_elements'))
+# print(query_ui("dashboard",20,'desktop','amazon_customer'))
 
 # """
 # 'function': {'name': 'search_products',

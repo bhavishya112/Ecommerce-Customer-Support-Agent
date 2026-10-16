@@ -121,10 +121,6 @@ TOOLS = [
                         "type": "string",
                         "description": "The UI question e.g. 'leave applications' or 'my content'.",
                     },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "How many top matches to get (default 5)",
-                    },
                     "view": {
                         "type": "string",
                         "enum": ["mobile", "desktop"],
@@ -132,11 +128,11 @@ TOOLS = [
                     },
                     "collection": {
                         "type": "string",
-                        "enum": ["ui_elements"],
+                        "enum": ["amazon_customer"],
                         "description": "vectordb collection to use for retrieval",
                     }
                 },
-                "required": ["question", "top_k", "view", "collection"],
+                "required": ["question", "view", "collection"],
                 "additionalProperties": False
             },
             "strict": True
@@ -191,7 +187,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_products",
-            "description": "Search products in our product inventory using query variables. sort is ASC by default. the results are paginated and use cur (cursor) to remember position. (by defualt empty string)",
+            "description": "Search products in our product inventory using query variables using USD currency. sort is ASC by default. the results are paginated and use cur (cursor) to remember position. (by defualt empty string)",
             "parameters": {
                 "type": "object",
                 "properties": {

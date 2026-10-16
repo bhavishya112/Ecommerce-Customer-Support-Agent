@@ -373,3 +373,61 @@ total tests
   }
 }
 ```
+
+<br>
+<br>
+
+## DATASET SCHEMA
+```
+{
+  tools: ["tool1","tool2"],
+  orders: {
+      rows: [
+         {"id1":"---",etc,etc},
+         {"id2":"---",etc,etc}
+
+       ]
+    },
+  products: {
+      rows: [
+        {"id1":"----",etc,etc},
+        {"id2":"----",etc,etc}
+      ]
+  },
+    "ui_elements":{
+    "amazon_customer":{
+      "docs":[[
+        {
+          "id1_gp1":"7684270b-e346-405d-902d-821c132d6f89"
+        }],
+        
+        [{
+          "id1_gp2":"59838706-8310-4a79-92be-8ff177c672e5"
+        },
+        {
+          "id2_gp2":"b01deb87-a36f-42cb-baa1-ed7e403d6734"
+        }],
+      ]
+    }
+  }
+}
+```
+IMPORTANT : *orders* & *products* are not lists, they just signify the broad category of tool calls, so plural is the rows part inside them.
+
+### Remember you have not added classname field for customer_service.json, gift_cards.json, home_page.json, return_order.json
+
+def recall_at_k(retrieved_docs, expected_output, k=5):
+    # Groups defined in Langfuse's expected output
+    groups = expected_output["groups"]
+
+    # IDs returned by your retriever
+    retrieved_ids = set(retrieved_docs[:k])
+
+    # Count each group only once if any of its IDs was retrieved
+    matched_groups = sum(
+        1
+        for group in groups
+        if retrieved_ids.intersection(group)
+    )
+
+    return matched_groups / len(groups) if groups else None
