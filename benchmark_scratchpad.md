@@ -414,7 +414,8 @@ total tests
 ```
 IMPORTANT : *orders* & *products* are not lists, they just signify the broad category of tool calls, so plural is the rows part inside them.
 
-### Remember you have not added classname field for customer_service.json, gift_cards.json, home_page.json, return_order.json
+### Remember you have not added classname field for customer_service.json, gift_cards.json, home_page.json, return_order.json ⚠️
+### Remember to update ui documents with additional field = "url" ⚠️
 
 def recall_at_k(retrieved_docs, expected_output, k=5):
     # Groups defined in Langfuse's expected output

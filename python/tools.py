@@ -1,4 +1,5 @@
 from __future__ import annotations
+from langfuse import observe
 
 import base64
 import json
@@ -37,6 +38,7 @@ MODEL_NAME = "all-minilm:l6-v2"
 VECTORDB_PATH = "data/vectordb/ui_vector_db"
 
 
+@observe(name="summarize", as_type="tool")
 def summarize(text: str, query: str | None = None) -> dict[str, Any]:
     """Summarize web results while preserving their original source list."""
     prompt = text + "\n\nGet useful and important details from the text."
@@ -180,7 +182,7 @@ def search_products(query: dict[str, Any], cur: str | None = None) -> dict[str, 
         for column_name, values in (("name", name), ("category", category), ("supplier", supplier)):
             if values:
                 _append_text_condition(conditions, params, column_name, values)
-        operator_map = {"lt": "<", "gt": ">", "et": "="}
+        operator_map = {"lt": "<=", "gt": ">=", "et": "="}
         for price_filter in price_filters:
             operator, value = price_filter.get(
                 "operator"), price_filter.get("value")

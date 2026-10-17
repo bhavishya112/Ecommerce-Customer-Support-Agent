@@ -15,10 +15,10 @@ def my_task(*, item, **kwargs):
     t0 = time.perf_counter()
     question = item.input
     emitter = QueueEmitter()
-    Agent(model=MODEL, req=question, emit=emitter.emit)
+    results = Agent(model=MODEL, req=question, emit=emitter.emit)
     latency = time.perf_counter() - t0
 
-    return {"latency": latency}
+    return {"output":results,"latency":latency}
 
 
 def latency_eval(*, output, **kwargs):
@@ -36,7 +36,7 @@ def latency_percentiles(*, item_results, **kwargs):
 
 
 # Get dataset from Langfuse
-dataset = langfuse.get_dataset("SET0")
+dataset = langfuse.get_dataset("SET1")
 
 result = dataset.run_experiment(
     name="V0",
