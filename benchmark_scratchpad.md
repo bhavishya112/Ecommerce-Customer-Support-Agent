@@ -382,6 +382,8 @@ total tests
 {
   tools: ["tool1","tool2"],
   orders: {
+    "args":---
+    ,
       rows: [
          {"id1":"---",etc,etc},
          {"id2":"---",etc,etc}
@@ -389,13 +391,25 @@ total tests
        ]
     },
   products: {
+     "args":[
+      {
+      "supplier":"logitech",
+      "sort":"ASC"
+    },
+      {
+        "supplier":"corsair",
+        "sort":"ASC"
+      }
+    ],
       rows: [
         {"id1":"----",etc,etc},
         {"id2":"----",etc,etc}
       ]
   },
     "ui_elements":{
-    "amazon_customer":{
+      "args" :[{
+          -----
+               }],
       "docs":[[
         {
           "id1_gp1":"7684270b-e346-405d-902d-821c132d6f89"
@@ -410,10 +424,11 @@ total tests
       ]
     }
   }
-}
+
 ```
 IMPORTANT : *orders* & *products* are not lists, they just signify the broad category of tool calls, so plural is the rows part inside them.
 
+## NOTICE
 ### Remember you have not added classname field for customer_service.json, gift_cards.json, home_page.json, return_order.json ⚠️
 ### Remember to update ui documents with additional field = "url" ⚠️
 
@@ -432,3 +447,8 @@ def recall_at_k(retrieved_docs, expected_output, k=5):
     )
 
     return matched_groups / len(groups) if groups else None
+
+## IMPORTANT
+- i have to add 2 evaluators namely : % testcase passed [consolidating all the metrics], argument correctness.
+- and correct MRR : it is run level evaluator, based on RR whcih is item-level one
+- i have to correct all of the query_ui test-cases

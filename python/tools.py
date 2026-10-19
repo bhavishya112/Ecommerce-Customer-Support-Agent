@@ -5,13 +5,13 @@ import base64
 import json
 import logging
 from typing import Any, Literal, Optional
+from decimal import Decimal
 
 import chromadb
 from ddgs import DDGS
 from openai import OpenAI
 from pymysql import Error
 from pymysql.cursors import DictCursor
-
 from python.db_connection import create_connection, create_qdrant_connection
 from python.fill_db import FIELD_COLLECTIONS, embed_text
 
@@ -163,7 +163,30 @@ def _decode_cursor(cursor: Optional[str]) -> Optional[dict[str, Any]]:
 
 
 def search_products(query: dict[str, Any], cur: str | None = None) -> dict[str, Any]:
-    """Search products and return rows that can be directly scored by evaluators."""
+    """Search products using optional text and numeric filters.
+
+    Uses vector-expanded fuzzy matching for name, category, and supplier fields
+    before applying SQL filters for price. Returns a list of matching products
+    or a descriptive message when no results are found.
+
+    Query = 
+    {
+        "name":string,
+        "category":string,
+        "price": [
+        {
+            "operator" : enum["lt","gt","et"],
+            "value" : float,   
+        }],
+        "supplier" : "string",
+        "sort" : ["ASC","DESC"]
+
+    }
+
+    Returns:
+        Many things but mainly Rows and Cursor to the next chunk
+
+    """
     connection = None
     try:
         connection = create_connection()
@@ -204,9 +227,13 @@ def search_products(query: dict[str, Any], cur: str | None = None) -> dict[str, 
         sql += f" ORDER BY price {sort}, product_id {sort} LIMIT 5"
         cursor.execute(sql, params)
         rows = [
-            {**row, "id": row.get("product_id")}
+            {
+                k: float(v) if isinstance(v, Decimal) else v
+                for k, v in row.items()
+            }
             for row in cursor.fetchall()
         ]
+
         next_cursor = _encode_cursor(
             rows[-1]["product_id"], rows[-1]["price"]) if rows else None
         return _success({"query": query, "corrected_query": corrected_query, "rows": rows, "product_ids": [row["product_id"] for row in rows], "cursor": next_cursor})
