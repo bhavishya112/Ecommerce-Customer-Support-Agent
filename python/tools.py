@@ -59,7 +59,7 @@ def summarize(text: str, query: str | None = None) -> dict[str, Any]:
         return _failure(error)
 
 
-def web_search(query: str, num_results: int = 3) -> dict[str, Any]:
+def web_search(query: str, num_results: int = 3,retry:bool = False) -> dict[str, Any]:
     """Search the web and return stable, structured source records."""
     try:
         num_results = int(num_results)
@@ -85,7 +85,7 @@ def web_search(query: str, num_results: int = 3) -> dict[str, Any]:
         return _failure(error)
 
 
-def query_ui(question: str, top_k: int = 5, view: Literal["desktop", "mobile"] = "desktop", collection: str = "ui_elements") -> dict[str, Any]:
+def query_ui(question: str, top_k: int = 5, view: Literal["desktop", "mobile"] = "desktop", collection: str = "ui_elements", retry:bool = False) -> dict[str, Any]:
     """Retrieve UI documents with rank, Chroma document ID, score, and metadata."""
     try:
         chroma_client = chromadb.PersistentClient(path=VECTORDB_PATH)
@@ -121,7 +121,7 @@ SEARCH_FIELD_MAP = {"name": "name",
                     "category": "category", "supplier": "supplier"}
 
 
-def get_order(order_id: str) -> dict[str, Any]:
+def get_order(order_id: str,retry:bool = False) -> dict[str, Any]:
     """Fetch an order and distinguish absence from database failure."""
     connection = None
     try:
@@ -162,7 +162,7 @@ def _decode_cursor(cursor: Optional[str]) -> Optional[dict[str, Any]]:
         return None
 
 
-def search_products(query: dict[str, Any], cur: str | None = None) -> dict[str, Any]:
+def search_products(query: dict[str, Any], cur: str | None = None,retry:bool = False) -> dict[str, Any]:
     """Search products using optional text and numeric filters.
 
     Uses vector-expanded fuzzy matching for name, category, and supplier fields
@@ -245,7 +245,7 @@ def search_products(query: dict[str, Any], cur: str | None = None) -> dict[str, 
             connection.close()
 
 
-def get_product(product_id: str) -> dict[str, Any]:
+def get_product(product_id: str,retry:bool = False) -> dict[str, Any]:
     """Fetch a product and distinguish absence from database failure."""
     connection = None
     try:
