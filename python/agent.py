@@ -106,8 +106,12 @@ TOOLS = [
                         "type": "integer",
                         "description": "Number of search results to return (default 3).",
                     },
+                    "retry": {
+                        "type": "boolean",
+                        "description": "If it is a retry attempt"
+                    }
                 },
-                "required": ["query", "num_results"],
+                "required": ["query", "num_results", "retry"],
                 "additionalProperties": False
             },
             "strict": True,
@@ -136,9 +140,13 @@ TOOLS = [
                         "type": "string",
                         "enum": ["amazon_customer"],
                         "description": "vectordb collection to use for retrieval",
+                    },
+                    "retry": {
+                        "type": "boolean",
+                        "description": "If it is a retry attempt"
                     }
                 },
-                "required": ["question", "view", "collection"],
+                "required": ["question", "view", "collection", "retry"],
                 "additionalProperties": False
             },
             "strict": True
@@ -158,9 +166,13 @@ TOOLS = [
                     "order_id": {
                         "type": "string",
                         "description": "Order ID"
+                    },
+                    "retry": {
+                        "type": "boolean",
+                        "description": "If it is a retry attempt"
                     }
                 },
-                "required": ["order_id"],
+                "required": ["order_id", "retry"],
                 "additionalProperties": False
             },
             "strict": True
@@ -181,9 +193,13 @@ TOOLS = [
                         {
                             "type": "string",
                             "description": "Product ID"
+                        },
+                        "retry": {
+                            "type": "boolean",
+                            "description": "If it is a retry attempt"
                         }
                     },
-                    "required": ["product_id"],
+                    "required": ["product_id", "retry"],
                     "additionalProperties": False
                 },
             "strict": True
@@ -229,9 +245,13 @@ TOOLS = [
                             "sort": {
                                 "type": "string",
                                 "enum": ["ASC", "DESC"],
+                            },
+                            "retry": {
+                                "type": "boolean",
+                                "description": "If it is a retry attempt"
                             }
                         },
-                        "required": ["name", "category", "price", "supplier", "sort"],
+                        "required": ["name", "category", "price", "supplier", "sort", "retry"],
                         "additionalProperties": False
 
                     },
@@ -291,6 +311,7 @@ def run_tool(tool_name: str, **args: Any) -> dict[str, Any]:
         record = {
             "name": tool_name,
             "arguments": args,
+            "retry": args.get("retry"),
             "status": result.get("status", "error"),
             "result": result,
             "error": result.get("error"),
@@ -487,7 +508,7 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
             langfuse.update_current_span(input={"question": request.query})
             system_prompt = """
         You are helpful chatbot for our customers, you can take multiple turns if a tool call fails
-        UI information may ONLY come from tool outputs.
+        UI information may ONLY come from tool outputs. fill retry=True in case of tool retry attempt.
         IMPORTANT : For ui related queries, provide full information such as size,position,color, flow like myprofile>billing>details
 
         Never answer UI-related questions from your internal knowledge or reasoning. If no tool has returned the requested information, reply that it could not be found instead of guessing.
@@ -499,7 +520,7 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
         you can use web_search for internal issues for example if you want to know about a product.
         Terminate ONLY by giving a final answer with no tool calls.
         """
-            
+
             add_or_update_conv(
                 [{"role": "user", "content": request.query}], request.user_id, request.conv_id)
 
@@ -637,6 +658,8 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
         result["llm"]["latency_ms"] = round(
             sum(record["latency_ms"] for record in llm_requests), 3)
         result["agent"]["tool_calls"] = [call["name"] for call in calls]
+        result["agent"]["tool_retries"] = [call["name"]
+                                           for call in calls if call.get("retry") is True]
         result["agent"]["final_answer"] = final_answer or None
         result["agent"]["termination_reason"] = termination_reason
         result["performance"]["total_latency_ms"] = round(
