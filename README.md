@@ -66,8 +66,8 @@ To use the project, you'll have to do some preprocessing (if you want to use the
   `snapshot_file` is the path to the json file we just created<br><br>
   **Remember**
   - **you provide --query only when you want to test what the database retrieves otherwise leave**<br>
-  - **Remember that you can provide collection name in this file by line `COLLECTION_NAME = "ui_elements"`** 
--  **If you provide collection name (default ui_elements), then change this line: `                        "enum": ["ui_elements"]` in root/python/agent.py**<br>
+  - **Remember that you can provide collection name in this file by line `COLLECTION_NAME = "amazon_customer"`** 
+-  **If you provide collection name (default amazon_customer), then change this line: `                        "enum": ["amazon_customer"]` in root/python/agent.py**<br>
   
 ### Phase 2
 [for Search Products Tool]
@@ -99,6 +99,8 @@ and for php related it is `php_logs.log`<br>
 `test.log` is only for testing purposes<br>
 `tools.log` is for tool calls
 
+## Problems Left Unanswered
+1. in future if we edit our website's let's say landing page, so how can we remove all documents with metadata : {page:"landingpage"} in vectordb and automate it
 
-
-
+2. there's one more problem, im using playwright, so i need to give it the url for the webpage to cache it, but many websites shift you to some other login page rather than showing you the exact page, so basically we can't just do something like remove auth in test environment and then cache it, that would be a lot of manual effort...
+can we do something like automate it instead of relying too much on trying to auth automatically using playwright

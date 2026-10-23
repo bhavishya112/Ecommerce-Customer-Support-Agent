@@ -1,229 +1,168 @@
-from typing import Literal
+from __future__ import annotations
+from langfuse import observe
+
+import base64
 import json
-import chromadb
-from openai import OpenAI
-from ddgs import DDGS
 import logging
+from typing import Any, Literal, Optional
+from decimal import Decimal
+
+import chromadb
+from ddgs import DDGS
+from openai import OpenAI
 from pymysql import Error
 from pymysql.cursors import DictCursor
 from python.db_connection import create_connection, create_qdrant_connection
 from python.fill_db import FIELD_COLLECTIONS, embed_text
 
-
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
-
-handler = logging.FileHandler("logs/tools.log", encoding="utf-8")
-handler.setFormatter(logging.Formatter(
-    "%(asctime)s %(levelname)s %(message)s",
-    datefmt="%d %B %I:%M %p"
-
-))
-
-logger.addHandler(handler)
+if not logger.handlers:
+    handler = logging.FileHandler("logs/tools.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(message)s", datefmt="%d %B %I:%M %p"))
+    logger.addHandler(handler)
 logger.propagate = False
 
 
-def web_search(query: str, num_results: int = 5) -> str:
-    """
-    Search the web and return formatted results.
-
-    Args:
-        query (str): Search query
-        num_results (int): Number of results to return
-
-    Returns:
-        Formatted string containing search results.
-    """
-
-    num_results = int(num_results)
-    logger.info("[web_search(query:%s,num_results:%d)]", query, num_results)
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=num_results))
-
-        if not results:
-            return "No search results found."
-
-        output = []
-
-        for i, result in enumerate(results, start=1):
-            title = result.get("title", "No title")
-            body = result.get("body", "")
-            href = result.get("href", "")
-
-            output.append(f"""Result {i}
-                            Title: {title}
-                            URL: {href}
-                            Snippet: {body}
-                            """)
-
-        result = "\n".join(output)
-        logger.info("✅Web Search Ended")
-        logger.info("[RESULT-WEB SEARCH] : \n%s", result)
-        if len(result) // 4 > 500:  # each token is on average 4 characters
-            return summarize(result, query)
-        return result
-
-    except Exception as e:
-        logger.exception("web search failed : " + str(e))
-        return f"Search failed: {e}"
+def _success(data: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "success", "data": data, "error": None}
 
 
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama",
-)
+def _failure(error: Exception | str, error_type: str | None = None) -> dict[str, Any]:
+    return {"status": "error", "data": None, "error": {"type": error_type or type(error).__name__, "message": str(error)}}
 
 
-def summarize(text: str, query: str | None = None) -> str:
-    """
-    Summarize the given text using DeepSeek-R1:1.5B running on Ollama.
+local_client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+MODEL_NAME = "all-minilm:l6-v2"
+VECTORDB_PATH = "data/vectordb/ui_vector_db"
 
-    Args:
-        text: The text to summarize.
-        query: Optional instruction to focus the summary.
 
-    Returns:
-        A summary string.
-    """
-    logger.info("[summarize(%s,%s)]", text, query)
+@observe(name="summarize", as_type="tool")
+def summarize(text: str, query: str | None = None) -> dict[str, Any]:
+    """Summarize web results while preserving their original source list."""
     prompt = text + "\n\nGet useful and important details from the text."
-
     if query:
         prompt += f"\n\nFocus the summary according to this query:\n{query}"
-
-    response = client.chat.completions.create(
-        # model="deepseek-r1:1.5b",
-        model="ibm/granite4.1:3b",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    """
-                  You are dad of an expert summarizer. Your primary rule: preserve ALL website references, links, and URLs exactly as they appear in the source text. 
-                - Always keep each URL directly attached to the specific point, fact, or information it supports. 
-                - Do not move URLs to the bottom or into a separate references section. 
-                - Do not paraphrase, shorten, or omit URLs. 
-                - If a summary point mentions a source, include the URL inline with that point.
-                    """
-                ),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=0.2,
-    )
-    logger.info("✅Done Summarizing")
-    summary = response.choices[0].message.content.strip()
-    logger.info("[SUMMARY] : \n%s", summary)
-    return summary
-
-
-openaiclient = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-
-MODEL_NAME = "all-minilm:l6-v2"
-# COLLECTION_NAME = "ui_elements"
-VECTORDB_PATH = "data/vectordb/ui_vector_db2"
-
-
-# vectordb path for querying ui
-
-
-def query_ui(
-    question: str,
-    top_k: int = 5,
-    view: Literal["desktop", "mobile"] = "desktop",
-    collection: str = "ui_elements",
-) -> str:
-    """
-    Used for Querying vectordb to return ui elements' information given what we want
-    Args:
-        question (str): a very concise question like "login button" 
-        top_k (str): [reranker should be added for scalability] top k no. of results to retrieve
-        view (str): mobile or desktop
-        collection (str): collection name
-    Returns:
-        k no. of ui element information [currently in plain string format, to be changed later for reranking]"""
-
     try:
-        logger.info("[query_ui(question : %s,top_k : %d, view : %s, collection : %s)]",
-                    question, top_k, view, collection)
-        client = chromadb.PersistentClient(path=VECTORDB_PATH)
-        collection = client.get_collection(collection)
-
-        response = openaiclient.embeddings.create(
-            input=question, model=MODEL_NAME)
-        embedding = [emb.embedding for emb in response.data]
-
-        results = collection.query(
-            query_embeddings=embedding, n_results=top_k, where={"view": view}
+        response = local_client.chat.completions.create(
+            model="ibm/granite4.1:3b",
+            messages=[
+                {"role": "system", "content": "You are an expert summarizer. Preserve every URL exactly and keep each URL with the information it supports."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
         )
-
-        matches = []
-        for doc, meta, dist in zip(
-            results["documents"][0], results["metadatas"][0], results["distances"][0]
-        ):
-            meta = dict(meta)
-            matches.append({"score": round(1 - dist, 3), "text": doc, **meta})
-
-        result = ""
-        for data in matches:
-            for x in data:
-                if x == "size":
-                    data[x] = json.loads(data[x])
-                result += f"{x} : {data[x]}|"
-                # print(f"{x} : {data[x]}")
-            result += "\n"
-
-        logger.info("✅ [QUERIED UI OK]:\n[RESULTS] : %s", result)
-        return result
-
-    except Exception as e:
-        logger.exception("query ui failed: "+str(e))
-        return "query_ui failed : " + str(e)
+        return _success({"summary": (response.choices[0].message.content or "").strip()})
+    except Exception as error:
+        logger.exception("summarization failed")
+        return _failure(error)
 
 
-# =================================DATABASE TOOLS=========================================================================
-
-SEARCH_SCORE_THRESHOLD = 0.7  # filter vectordb retrieval results
-SEARCH_LIMIT = 10   # no. of webpages to return by web_search tool
-SEARCH_FIELD_MAP = {    # its currently useless, but keep it here for stability
-    "name": "name",
-    "category": "category",
-    "supplier": "supplier",
-}
-
-
-def get_order(order_id: str):
-    """Fetch order details for a given order ID.
-
-    Connects to the database, queries the orders table using a parameterized
-    order_id, and returns either the order row or a message dict when not found.
-    """
-    conn = None
+def web_search(query: str, num_results: int = 3,retry:bool = False) -> dict[str, Any]:
+    """Search the web and return stable, structured source records."""
     try:
-        conn = create_connection()
-        if not conn:
-            return {"error": "Database connection failed."}
+        num_results = int(num_results)
+        with DDGS() as ddgs:
+            raw_results = list(ddgs.text(query, max_results=num_results))
+        results = [
+            {"rank": rank, "title": result.get("title", "No title"), "url": result.get(
+                "href", ""), "snippet": result.get("body", "")}
+            for rank, result in enumerate(raw_results, start=1)
+        ]
+        data: dict[str, Any] = {
+            "query": query, "results": results, "result_count": len(results), "summary": None}
+        source_text = "\n".join(
+            f"Result {item['rank']}\nTitle: {item['title']}\nURL: {item['url']}\nSnippet: {item['snippet']}" for item in results)
+        if results and len(source_text) // 4 > 500:
+            summary_result = summarize(source_text, query)
+            if summary_result["status"] == "success":
+                data["summary"] = summary_result["data"]["summary"]
+        logger.info("web search completed with %d results", len(results))
+        return _success(data)
+    except Exception as error:
+        logger.exception("web search failed")
+        return _failure(error)
 
-        cursor = conn.cursor(DictCursor)
+
+def query_ui(question: str, top_k: int = 5, view: Literal["desktop", "mobile"] = "desktop", collection: str = "ui_elements", retry:bool = False) -> dict[str, Any]:
+    """Retrieve UI documents with rank, Chroma document ID, score, and metadata."""
+    try:
+        chroma_client = chromadb.PersistentClient(path=VECTORDB_PATH)
+        chroma_collection = chroma_client.get_collection(collection)
+        embedding_response = local_client.embeddings.create(
+            input=question, model=MODEL_NAME)
+        results = chroma_collection.query(
+            query_embeddings=[item.embedding for item in embedding_response.data], n_results=top_k, where={"view": view}
+        )
+        matches: list[dict[str, Any]] = []
+        for rank, (document_id, document, metadata, distance) in enumerate(
+            zip(results.get("ids", [[]])[0], results.get("documents", [[]])[0], results.get("metadatas", [[]])[0], results.get("distances", [[]])[0]), start=1
+        ):
+            normalized_metadata = dict(metadata or {})
+            if isinstance(normalized_metadata.get("size"), str):
+                try:
+                    normalized_metadata["size"] = json.loads(
+                        normalized_metadata["size"])
+                except json.JSONDecodeError:
+                    pass
+            matches.append({"rank": rank, "document_id": document_id, "score": round(
+                1 - distance, 3), "text": document, "metadata": normalized_metadata})
+        logger.info("UI query completed with %d results", len(matches))
+        return _success({"query": question, "collection": collection, "view": view, "results": matches, "retrieved_document_ids": [item["document_id"] for item in matches]})
+    except Exception as error:
+        logger.exception("query_ui failed")
+        return _failure(error)
+
+
+SEARCH_SCORE_THRESHOLD = 0.7
+SEARCH_LIMIT = 10
+SEARCH_FIELD_MAP = {"name": "name",
+                    "category": "category", "supplier": "supplier"}
+
+
+def get_order(order_id: str,retry:bool = False) -> dict[str, Any]:
+    """Fetch an order and distinguish absence from database failure."""
+    connection = None
+    try:
+        connection = create_connection()
+        if not connection:
+            return _failure("Database connection failed.", "DatabaseConnectionError")
+        cursor = connection.cursor(DictCursor)
         cursor.execute("SELECT * FROM orders WHERE order_id = %s", (order_id,))
-        result = cursor.fetchone()
-        logger.info("[get_order(order_id:%d)] ✅ Successful!", order_id)
-        logger.info("[RESULT] : %s", result)
-        return result if result else {"message": f"No order found with ID {order_id}"}
-    except Error as e:
-        logger.exception("[get_order] ❌ Failed : %s", str(e))
-        return {"error": str(e)}
+        order = cursor.fetchone()
+        if order is not None and "id" not in order:
+            order = {**order, "id": order.get("order_id")}
+        return _success({"order_id": order_id, "found": order is not None, "order": order})
+    except Error as error:
+        logger.exception("get_order failed")
+        return _failure(error)
     finally:
-        if conn:
-            conn.close()
+        if connection:
+            connection.close()
 
 
-def search_products(query: dict):
+def _encode_cursor(product_id: str, price: float) -> str:
+    raw = json.dumps({"pid": product_id, "p": round(price, 2)},
+                     separators=(",", ":"), default=str).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: Optional[str]) -> Optional[dict[str, Any]]:
+    if not cursor:
+        return None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(
+            padded.encode("ascii")).decode("utf-8"))
+        if not isinstance(payload["pid"], str):
+            return None
+        return {"product_id": payload["pid"], "price": float(payload["p"])}
+    except (KeyError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def search_products(query: dict[str, Any], cur: str | None = None,retry:bool = False) -> dict[str, Any]:
     """Search products using optional text and numeric filters.
 
     Uses vector-expanded fuzzy matching for name, category, and supplier fields
@@ -236,205 +175,138 @@ def search_products(query: dict):
         "category":string,
         "price": [
         {
-            "operator" : ["lt","gt","et"],
-            "value" : float
+            "operator" : enum["lt","gt","et"],
+            "value" : float,   
         }],
-        "supplier" : "string"
+        "supplier" : "string",
+        "sort" : ["ASC","DESC"]
+
     }
 
     Returns:
-        (name,category,price,supplier) tuples
+        Many things but mainly Rows and Cursor to the next chunk
 
     """
-    logger.info("[search_products(query : %s)]", str(query))
-    conn = None
-
+    connection = None
     try:
-
-        conn = create_connection()
-
-        if not conn:
-            return {"error": "Database connection failed."}
-
-        cursor = conn.cursor(DictCursor)
-
-        print("Real Query : ", query)
+        connection = create_connection()
+        if not connection:
+            return _failure("Database connection failed.", "DatabaseConnectionError")
+        cursor = connection.cursor(DictCursor)
         corrected_query = _correct_search_terms(query)
-        print("Corrected Query : ", corrected_query)
-        name = corrected_query.get("name")
-        category = corrected_query.get("category")
-        price = query.get("price", {})
-
-        for p in price:
-            op = p.get("operator")
-            value = p.get("value")
-            supplier = corrected_query.get("supplier")
-
-        conditions = []
-        params = []
-
-        if name:
-            _append_text_condition(conditions, params, "name", name)
-
-        if category:
-            _append_text_condition(conditions, params, "category", category)
-
-        if supplier:
-            _append_text_condition(conditions, params, "supplier", supplier)
-
-        for p in price:
-            # print("⚡p:",p)  
-            # print("o : ",o,"v : ",v)
-            o = p.get('operator')
-            v = p.get('value')
-            if o and v is not None:
-                if o == "lt":
-                    conditions.append("price < %s")
-                if o == "gt":
-                    conditions.append("price > %s")
-                elif o == "et":
-                    conditions.append("price = %s")
-                params.append(v)
-        print("⚡params : ",params)
-        print(" ⚡ conditions : ",conditions)
-        print("⚡conditions : ", conditions)
-        q = "SELECT name, category, price, supplier FROM products"
+        name, category, supplier = corrected_query.get("name"), corrected_query.get(
+            "category"), corrected_query.get("supplier")
+        price_filters, sort = query.get(
+            "price") or [], query.get("sort", "ASC")
+        if sort not in {"ASC", "DESC"}:
+            return _failure("sort must be ASC or DESC", "InvalidArguments")
+        conditions: list[str] = []
+        params: list[Any] = []
+        for column_name, values in (("name", name), ("category", category), ("supplier", supplier)):
+            if values:
+                _append_text_condition(conditions, params, column_name, values)
+        operator_map = {"lt": "<=", "gt": ">=", "et": "="}
+        for price_filter in price_filters:
+            operator, value = price_filter.get(
+                "operator"), price_filter.get("value")
+            if operator and value is not None:
+                if operator not in operator_map:
+                    return _failure("Unsupported price operator", "InvalidArguments")
+                conditions.append(f"price {operator_map[operator]} %s")
+                params.append(value)
+        if cur:
+            cursor_state = _decode_cursor(cur)
+            if cursor_state is None:
+                return _failure("Invalid pagination cursor", "InvalidArguments")
+            conditions.append(
+                f"(price,product_id) {'>' if sort == 'ASC' else '<'} (%s,%s)")
+            params.extend([cursor_state["price"], cursor_state["product_id"]])
+        sql = "SELECT product_id, name, category, price, supplier FROM products"
         if conditions:
-            q += " WHERE " + " AND ".join(conditions)
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += f" ORDER BY price {sort}, product_id {sort} LIMIT 5"
+        cursor.execute(sql, params)
+        rows = [
+            {
+                k: float(v) if isinstance(v, Decimal) else v
+                for k, v in row.items()
+            }
+            for row in cursor.fetchall()
+        ]
 
-        print("⚡query : ", q)
-        cursor.execute(q, params)
-
-        results = cursor.fetchall()
-
-        logger.info("[search_products] ✅ Successful!")
-        logger.info("[RESULTS] : %s", results)
-        if results:
-
-            return results
-
-        return {"message": f"No products found for the query {q} : {params}"}
-
-    except Exception as e:
-        logger.exception("[search_products] ❌ Failed! : %s", str(e))
-        return {"error": str(e)}
-
+        next_cursor = _encode_cursor(
+            rows[-1]["product_id"], rows[-1]["price"]) if rows else None
+        return _success({"query": query, "corrected_query": corrected_query, "rows": rows, "product_ids": [row["product_id"] for row in rows], "cursor": next_cursor})
+    except Exception as error:
+        logger.exception("search_products failed")
+        return _failure(error)
     finally:
-        if conn:
-            conn.close()
+        if connection:
+            connection.close()
 
 
-def get_product(product_id: str):
-    """Fetch product details by product_id."""
-    conn = None
+def get_product(product_id: str,retry:bool = False) -> dict[str, Any]:
+    """Fetch a product and distinguish absence from database failure."""
+    connection = None
     try:
-        conn = create_connection()
-        if not conn:
-            return {"error": "Database connection failed."}
-
-        cursor = conn.cursor(DictCursor)
+        connection = create_connection()
+        if not connection:
+            return _failure("Database connection failed.", "DatabaseConnectionError")
+        cursor = connection.cursor(DictCursor)
         cursor.execute(
             "SELECT * FROM products WHERE product_id = %s", (product_id,))
-        result = cursor.fetchone()
-
-        logger.info("[get_product] ✅ Successful!")
-        logger.info("[RESULTS] : %s", result)
-        return (
-            result if result else {
-                "message": f"No product found with ID {product_id}"}
-        )
-    except Error as e:
-        logger.exception("[get_product] ❌ Failed! : %s", str(e))
-        return {"error": str(e)}
+        product = cursor.fetchone()
+        if product is not None:
+            product = {**product, "id": product.get("product_id")}
+        return _success({"product_id": product_id, "found": product is not None, "product": product})
+    except Error as error:
+        logger.exception("get_product failed")
+        return _failure(error)
     finally:
-        if conn:
-            conn.close()
+        if connection:
+            connection.close()
 
 
-def _correct_search_terms(query):
-    """Translate fuzzy text query values into matched values via Qdrant.
-
-    Attempts to use Qdrant to find close matches for supported text fields,
-    then replaces the original query values with the matched payloads.
-    """
+def _correct_search_terms(query: dict[str, Any]) -> dict[str, Any]:
     corrected_query = dict(query or {})
-
     try:
-        qdrant_conn = create_qdrant_connection()
+        qdrant_connection = create_qdrant_connection()
     except Exception:
         return corrected_query
-
-    if not qdrant_conn:
+    if not qdrant_connection:
         return corrected_query
-
     for query_key, field_name in SEARCH_FIELD_MAP.items():
         value = corrected_query.get(query_key)
         if not value:
             continue
-
         try:
-            matches = _vector_matches_for_field(qdrant_conn, field_name, value)
+            matches = _vector_matches_for_field(
+                qdrant_connection, field_name, value)
         except Exception:
             continue
-
         if matches:
             corrected_query[query_key] = matches
-
     return corrected_query
 
 
-def _vector_matches_for_field(qdrant_conn, field_name, value):
-    """Search Qdrant for a text field value and return matching payloads.
-
-    Converts the provided text into an embedding, queries the configured Qdrant
-    collection for the field, and returns a list of matching field values whose
-    similarity scores are above the threshold.
-    """
+def _vector_matches_for_field(qdrant_connection: Any, field_name: str, value: str) -> list[str]:
     vector = embed_text(value)
     collection_name = FIELD_COLLECTIONS[field_name]
-
-    if hasattr(qdrant_conn, "search"):
-        results = qdrant_conn.search(
-            collection_name=collection_name,
-            query_vector=vector,
-            limit=SEARCH_LIMIT,
-            with_payload=True,
-            score_threshold=SEARCH_SCORE_THRESHOLD,
-        )
+    if hasattr(qdrant_connection, "search"):
+        results = qdrant_connection.search(collection_name=collection_name, query_vector=vector,
+                                           limit=SEARCH_LIMIT, with_payload=True, score_threshold=SEARCH_SCORE_THRESHOLD)
     else:
-        query_result = qdrant_conn.query_points(
-            collection_name=collection_name,
-            query=vector,
-            limit=SEARCH_LIMIT,
-            with_payload=True,
-            score_threshold=SEARCH_SCORE_THRESHOLD,
-        )
+        query_result = qdrant_connection.query_points(
+            collection_name=collection_name, query=vector, limit=SEARCH_LIMIT, with_payload=True, score_threshold=SEARCH_SCORE_THRESHOLD)
         results = getattr(query_result, "points", query_result)
-
-    matches = []
-    for result in results:
-        score = getattr(result, "score", 0) or 0
-        payload = getattr(result, "payload", {}) or {}
-        matched_value = payload.get(field_name)
-        if matched_value and score >= SEARCH_SCORE_THRESHOLD:
-            matches.append(matched_value)
-    # from IPython import embed
-    # embed()
-    return matches[:SEARCH_LIMIT]
+    return [result.payload[field_name] for result in results if getattr(result, "payload", None) and result.payload.get(field_name) and (getattr(result, "score", 0) or 0) >= SEARCH_SCORE_THRESHOLD][:SEARCH_LIMIT]
 
 
-def _append_text_condition(conditions, params, column_name, values):
-    """Append SQL LIKE conditions for one text column and its values.
-
-    Converts a single value or list of values into SQL placeholders for
-    wildcard text matching and extends the conditions and params lists.
-    """
+def _append_text_condition(conditions: list[str], params: list[Any], column_name: str, values: str | list[str]) -> None:
     values = values if isinstance(values, list) else [values]
     placeholders = []
-
     for value in values:
         placeholders.append(f"{column_name} LIKE %s")
         params.append(f"%{value}%")
-
     if placeholders:
         conditions.append("(" + " OR ".join(placeholders) + ")")

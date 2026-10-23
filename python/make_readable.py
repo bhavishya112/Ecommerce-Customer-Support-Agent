@@ -57,7 +57,10 @@ def color_readable(rgb_string):
     Returns:
         closest name of the color"""
     nums = list(map(int, re.findall(r"\d+", rgb_string)))
-    r, g, b = nums[:3]
+    if (len(nums) >= 3):
+        r, g, b = nums[:3]
+    else:
+        return "null"
     requested = (r, g, b)
     min_dist = float("inf")
     closest = None

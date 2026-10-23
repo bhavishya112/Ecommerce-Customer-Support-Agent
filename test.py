@@ -1,3 +1,4 @@
+# THIS IS WRITTEN BY CODEX
 # from tools import summarize
 
 # text = """
@@ -89,7 +90,7 @@
 # from python.tools import search_products
 # import chromadb
 
-# client = chromadb.PersistentClient(path="data/vectordb/ui_vector_db2")
+# client = chromadb.PersistentClient(path="data/vectordb/ui_vector_db")
 # collection = client.list_collections()
 # print(collection)
 
@@ -127,7 +128,7 @@
 # from tools import query_ui
 
 
-# print(query_ui("dashboard",20,'desktop','ui_elements'))
+# print(query_ui("dashboard",20,'desktop','amazon_customer'))
 
 # """
 # 'function': {'name': 'search_products',
@@ -199,16 +200,17 @@
 #     time.sleep(0.5)
 #     emit("thinking", {"token": "fucker"})
 
-import json 
+from python.tools import search_products, _vector_matches_for_field
+import json
 from python.fill_db import fetch_product_field_values
-from python.db_connection import  create_qdrant_connection,create_connection
+from python.db_connection import create_qdrant_connection, create_connection
 mariadbclient = create_connection()
 vectordbclient = create_qdrant_connection()
 
-from python.tools import search_products,_vector_matches_for_field
 
 # print(search_products( {'category': 'gpu','price': [{'operator': 'gt', 'value': 300},{'operator': 'lt', 'value': 700}], 'supplier': ''}))
-print(search_products( {'category': 'GPU', 'name': '', 'price': [{'operator': 'lt', 'value': 400}, {'operator': 'gt', 'value': 200}], 'supplier': 'NVIDIA'}))
+print(search_products({'category': 'graphics card',
+      'name': 'nvidia', 'price': [], 'supplier': ''}, ""))
 
 # print(_vector_matches_for_field(vectordbclient,"supplier","Intel"))
 # from python.fill_db import fetch_product_field_values
