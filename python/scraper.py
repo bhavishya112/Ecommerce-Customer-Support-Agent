@@ -4,6 +4,12 @@ import json
 from playwright.sync_api import sync_playwright
 
 
+def is_logged_in(page) -> bool:
+    text = page.locator(
+        "#nav-link-accountList-nav-line-1").inner_text(timeout=10000)
+    return "sign in" not in text.lower()
+
+
 def extract_ui_tree(url: str):
     """Renders the page using Playwright and extracts DOM tree from mobile (360x414) and desktop (1280x720) perspectives
     Args:
@@ -11,18 +17,28 @@ def extract_ui_tree(url: str):
     Returns:
         DOM tree (dict)"""
 
-    with sync_playwright() as p:
-        try:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir="./browser_profile",
-                headless=True,
-                viewport={"width": 1280, "height": 720}
-            )
+    ui_tree_json1 = {}
+    ui_tree_json2 = {}
 
-            if context.pages:
-                page = context.pages[0]
-            else:
-                raise (Exception("you're not logged in sorry."))
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            channel="chrome",
+            ignore_default_args=["--enable-automation"],
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+
+        try:
+            # desktop
+            desktop_ctx = browser.new_context(
+                storage_state="auth.json",
+                viewport={"width": 1280, "height": 720},
+            )
+            page = desktop_ctx.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+            if not is_logged_in(page):
+                raise RuntimeError("Not logged in. Re-run setup_browser.py")
 
             page.goto(
                 url,
@@ -98,33 +114,34 @@ def extract_ui_tree(url: str):
         except Exception as e:
             print(e)
         finally:
-            context.close()
+            desktop_ctx.close()
 
     with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            channel="chrome",
+            ignore_default_args=["--enable-automation"],
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+
         try:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir="./browser_profile",
-                headless=False,
-                viewport={"width": 375, "height": 667},
-                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            mobile_ctx = browser.new_context(
+                storage_state="auth.json",
+                viewport={"width": 360, "height": 414},
                 is_mobile=True,
-                has_touch=True
+                has_touch=True,
             )
-            
-            if context.pages:
-                page = context.pages[0]
-            else:
-                raise (Exception("you're not logged in sorry."))
+            page = mobile_ctx.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+            if not is_logged_in(page):
+                raise RuntimeError("Not logged in. Re-run setup_browser.py")
 
             page.goto(
                 url,
                 wait_until="domcontentloaded",
                 timeout=60000
             )
-
-            # Wait for the page to finish rendering.
-            page.wait_for_timeout(3000)
-
 
             # Wait for the network to be idle to ensure the UI is fully rendered
             # page.wait_for_load_state("domcontentloaded")
@@ -191,7 +208,7 @@ def extract_ui_tree(url: str):
         except Exception as e:
             print(e)
         finally:
-            context.close()
+            mobile_ctx.close()
 
     resTree = dict()
     resTree["desktop"] = ui_tree_json1

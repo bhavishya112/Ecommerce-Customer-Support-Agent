@@ -149,7 +149,7 @@ def flatten(node: dict, path: str, page: str, description: str, view="desktop", 
             # "path": current_path,
             # "tag": node.get("tagName"),
             # closest analogue to the old "type" field
-            # "element_id": node.get("id"),
+            "element_id": node.get("id")
             # "selector": _pseudo_selector(node),
             # not provided by the new scraper
         }

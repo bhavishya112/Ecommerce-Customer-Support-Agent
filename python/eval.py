@@ -20,8 +20,8 @@ from rapidfuzz import fuzz
 
 load_dotenv(".env")
 
-# DATASET_NAME = "SET1"
-DATASET_NAME = "test-set"
+DATASET_NAME = "SET1"
+# DATASET_NAME = "test-set"
 EXPERIMENT_NAME = "V0"
 RETRIEVAL_K = 5
 JUDGE_BASE_URL = "https://integrate.api.nvidia.com/v1"
@@ -428,7 +428,7 @@ def _quality_evaluations(input: Any, output: dict[str, Any]) -> tuple[list[Evalu
 
         hallucination_rate = hallucinated_count / claim_count if claim_count else 0.0
         if claim_count == 0:
-            severity = 0.0
+            severity = None
         elif hallucination_rate == 0:
             severity = 1.0
         elif hallucination_rate <= 0.25:
@@ -570,7 +570,7 @@ def testcase_percent_passed(*, input, output, expected_output, **kwargs):
 
 
 def quality_evaluator(*, input, output, expected_output=None, **kwargs):
-    """Publish quality metrics and the weighted testcase result from one judge call."""
+    """Publish metrics and the weighted testcase result from one judge call."""
     return testcase_percent_passed(
         input=input, output=output, expected_output=expected_output or {}, **kwargs
     )
