@@ -13,7 +13,6 @@ from openai import OpenAI
 from pymysql import Error
 from pymysql.cursors import DictCursor
 from python.db_connection import create_connection, create_qdrant_connection
-from python.fill_db import FIELD_COLLECTIONS, embed_text
 
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
@@ -290,6 +289,8 @@ def _correct_search_terms(query: dict[str, Any]) -> dict[str, Any]:
 
 
 def _vector_matches_for_field(qdrant_connection: Any, field_name: str, value: str) -> list[str]:
+    from python.fill_db import FIELD_COLLECTIONS, embed_text
+
     vector = embed_text(value)
     collection_name = FIELD_COLLECTIONS[field_name]
     if hasattr(qdrant_connection, "search"):

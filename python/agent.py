@@ -11,14 +11,14 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from threading import Thread
-from typing import Callable
-from openai import OpenAI
+from typing import Any, Callable, Literal, TypedDict
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
 from langfuse import observe, propagate_attributes, get_client
 import pprint
 from python.tools import web_search, query_ui, get_order, get_product, search_products
 import time
 import uuid
-from typing import Any
 
 from dotenv import load_dotenv
 
@@ -82,7 +82,7 @@ class ChatRequest(BaseModel):
 logger.info("The application started successfully.")
 
 # ============================================================================================
-#                                       TOOL DEFINITIONS | TOOLS
+#                                      TOOL REGISTRY | TOOL DEFINITIONS | TOOLS
 # ==========================================================================================
 
 # These are different TOOLS to be fed into the LLM
@@ -280,45 +280,42 @@ AVAILABLE_TOOLS: dict[str, Callable] = {
 # ------------------------------------------------------------------
 # Executes tool calls returned by the LLM (Not to be modified with new tool)
 # ------------------------------------------------------------------
+@observe(as_type="tool", name="agent-tool")
 def run_tool(tool_name: str, **args: Any) -> dict[str, Any]:
     """Run exactly one agent tool and retain the evidence needed for evaluation."""
     started_at = time.perf_counter()
     tool = AVAILABLE_TOOLS.get(tool_name)
-    with langfuse.start_as_current_observation(
-        as_type="tool",
-        name=tool_name,
-        input={"arguments": args},
-    ) as observation:
-        if tool is None:
+    langfuse.update_current_span(name=tool_name, input={"arguments": args})
+    if tool is None:
+        result = {
+            "status": "error",
+            "data": None,
+            "error": {"type": "UnknownTool", "message": f"Unknown tool: {tool_name}"},
+        }
+    else:
+        try:
+            result = tool(**args)
+        except Exception as error:
+            logger.exception(
+                "tool %s raised an unhandled exception", tool_name)
             result = {
                 "status": "error",
                 "data": None,
-                "error": {"type": "UnknownTool", "message": f"Unknown tool: {tool_name}"},
+                "error": {"type": type(error).__name__, "message": str(error)},
             }
-        else:
-            try:
-                result = tool(**args)
-            except Exception as error:
-                logger.exception(
-                    "tool %s raised an unhandled exception", tool_name)
-                result = {
-                    "status": "error",
-                    "data": None,
-                    "error": {"type": type(error).__name__, "message": str(error)},
-                }
 
-        latency_ms = round((time.perf_counter() - started_at) * 1000, 3)
-        record = {
-            "name": tool_name,
-            "arguments": args,
-            "retry": args.get("retry"),
-            "status": result.get("status", "error"),
-            "result": result,
-            "error": result.get("error"),
-            "latency_ms": latency_ms,
-        }
-        observation.update(output=record)
-        return record
+    latency_ms = round((time.perf_counter() - started_at) * 1000, 3)
+    record = {
+        "name": tool_name,
+        "arguments": args,
+        "retry": args.get("retry"),
+        "status": result.get("status", "error"),
+        "result": result,
+        "error": result.get("error"),
+        "latency_ms": latency_ms,
+    }
+    langfuse.update_current_span(output=record)
+    return record
 
 
 # ---------------------------------CONVERSATIONS---------------------------------------------------
@@ -348,15 +345,6 @@ def add_or_update_conv(message: list[dict[str, str]], user_id: int, conv_id: int
 # ---------------------------------------------------------------------------------------------------
 
 
-# client = OpenAI(
-#     base_url="http://localhost:11434/v1",
-#     api_key="",
-# )
-
-client = OpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=GROQ_API_KEY,
-)
 langfuse = get_client()
 
 MAX_ITERATIONS = 5  # Max React Cycle Loop Limit
@@ -429,20 +417,134 @@ def _normalize_request(req: ChatRequest | str | dict[str, Any]) -> ChatRequest:
     )
 
 
-def _usage_record(usage: Any) -> dict[str, Any] | None:
-    """Normalize Groq's OpenAI-compatible usage object for Langfuse and evaluators."""
-    if usage is None:
+# ------------------------------------------------------------------
+# LangChain owns provider communication and streaming normalization.
+# The existing ReAct loop retains tool order and evaluator-facing records.
+# ------------------------------------------------------------------
+def _build_langchain_model(model: str):
+    chat_model = ChatOpenAI(
+        model=model,
+        api_key=GROQ_API_KEY,
+        base_url="https://api.groq.com/openai/v1",
+        temperature=0.2,
+        top_p=0.4,
+        max_tokens=1024,
+        reasoning_effort="medium",
+        streaming=True,
+        stream_usage=True,
+    )
+    return chat_model.bind_tools(TOOLS, strict=True)
+
+
+def _content_text(content: Any) -> str:
+    """Keep the existing string-only SSE message contract for LangChain chunks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            item.get("text", "") for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return ""
+
+
+def _usage_from_langchain_chunk(chunk: Any) -> dict[str, Any] | None:
+    usage = getattr(chunk, "usage_metadata", None)
+    if not usage:
+        usage = (getattr(chunk, "response_metadata", {})
+                 or {}).get("token_usage")
+    if not usage:
         return None
-    raw = usage.model_dump() if hasattr(usage, "model_dump") else dict(usage)
     return {
-        "input_tokens": raw.get("prompt_tokens"),
-        "output_tokens": raw.get("completion_tokens"),
-        "total_tokens": raw.get("total_tokens"),
-        "prompt_time_s": raw.get("prompt_time"),
-        "completion_time_s": raw.get("completion_time"),
-        "queue_time_s": raw.get("queue_time"),
-        "provider_total_time_s": raw.get("total_time"),
+        "input_tokens": usage.get("input_tokens", usage.get("prompt_tokens")),
+        "output_tokens": usage.get("output_tokens", usage.get("completion_tokens")),
+        "total_tokens": usage.get("total_tokens"),
+        "prompt_time_s": None,
+        "completion_time_s": None,
+        "queue_time_s": None,
+        "provider_total_time_s": None,
     }
+
+
+@observe(as_type="generation", name="groq-chat-completion")
+async def _stream_langchain_generation(
+    model_with_tools: Any,
+    model_messages: list[dict[str, Any]],
+    model: str,
+    iteration: int,
+    emit: Callable,
+) -> dict[str, Any]:
+    """Stream one LangChain model turn into the pre-existing evaluator record."""
+    generation_started_at = time.perf_counter()
+    assistant_content = ""
+    assistant_reasoning = ""
+    tool_calls: dict[int, dict[str, str]] = {}
+    finish_reason = None
+    usage = None
+    langfuse.update_current_generation(
+        input={"messages": model_messages},
+        model=model,
+        model_parameters={
+            "temperature": 0.2,
+            "top_p": 0.4,
+            "max_tokens": 1024,
+            "reasoning_effort": "medium",
+        },
+    )
+
+    async for chunk in model_with_tools.astream(model_messages):
+        chunk_usage = _usage_from_langchain_chunk(chunk)
+        if chunk_usage is not None:
+            usage = chunk_usage
+        response_metadata = getattr(chunk, "response_metadata", {}) or {}
+        finish_reason = response_metadata.get("finish_reason") or finish_reason
+
+        reasoning = (getattr(chunk, "additional_kwargs", {})
+                     or {}).get("reasoning")
+        if reasoning:
+            assistant_reasoning += reasoning
+            emit("thinking", {"token": reasoning})
+
+        content = _content_text(getattr(chunk, "content", ""))
+        if content:
+            assistant_content += content
+            emit("message", {"token": content})
+
+        for tool_call_chunk in getattr(chunk, "tool_call_chunks", []) or []:
+            tool_call_index = int(tool_call_chunk.get("index", 0))
+            if tool_call_index not in tool_calls:
+                tool_calls[tool_call_index] = {
+                    "id": "", "name": "", "arguments": ""}
+            if tool_call_chunk.get("id"):
+                tool_calls[tool_call_index]["id"] = tool_call_chunk["id"]
+            if tool_call_chunk.get("name"):
+                tool_calls[tool_call_index]["name"] = tool_call_chunk["name"]
+            if tool_call_chunk.get("args"):
+                tool_calls[tool_call_index]["arguments"] += tool_call_chunk["args"]
+
+    generation_record = {
+        "iteration": iteration,
+        "model": model,
+        "finish_reason": finish_reason,
+        "content": assistant_content,
+        "reasoning": assistant_reasoning or None,
+        "tool_calls": list(tool_calls.values()),
+        "usage": usage,
+        "latency_ms": round((time.perf_counter() - generation_started_at) * 1000, 3),
+    }
+    langfuse.update_current_generation(
+        output=generation_record,
+        usage_details={
+            key: value for key, value in (usage or {}).items()
+            if key in {"input_tokens", "output_tokens", "total_tokens"} and value is not None
+        },
+    )
+    return generation_record
+
+
+async def _run_tool_async(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Keep the public synchronous tool contract while avoiding event-loop blocking."""
+    return await asyncio.to_thread(run_tool, tool_name, **arguments)
 
 
 def _empty_evaluation_view() -> dict[str, Any]:
@@ -472,6 +574,16 @@ def _add_to_evaluation_view(view: dict[str, Any], call: dict[str, Any]) -> None:
             "retrieved_document_ids": data.get("retrieved_document_ids") or [],
             "results": data.get("results") or [],
         }
+
+
+class AgentGraphState(TypedDict, total=False):
+    """Internal LangGraph state; the public Agent result remains unchanged."""
+    iteration: int
+    model_messages: list[dict[str, Any]]
+    generation_record: dict[str, Any]
+    calls: list[dict[str, Any]]
+    final_answer: str
+    termination_reason: str
 
 
 @observe(as_type="agent", name="ecommerce-support-agent")
@@ -523,123 +635,110 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
 
             add_or_update_conv(
                 [{"role": "user", "content": request.query}], request.user_id, request.conv_id)
+            model_with_tools = _build_langchain_model(model)
 
-            for iteration in range(1, MAX_ITERATIONS + 1):
+            # ------------------------------------------------------------------
+            # LangGraph controls iteration and routing; nodes preserve existing
+            # conversation records, events, and evaluator-facing output fields.
+            # ------------------------------------------------------------------
+            async def model_node(state: AgentGraphState) -> AgentGraphState:
+                iteration = state["iteration"] + 1
                 result["agent"]["iterations"] = iteration
                 model_messages = [{"role": "system", "content": system_prompt}
                                   ] + CONVERSATIONS[request.user_id][request.conv_id]
-                generation_started_at = time.perf_counter()
-                assistant_content = ""
-                assistant_reasoning = ""
-                tool_calls: dict[int, dict[str, str]] = {}
-                finish_reason = None
-                usage = None
-
-                with langfuse.start_as_current_observation(
-                    as_type="generation",
-                    name="groq-chat-completion",
-                    model=model,
-                    input={"messages": model_messages},
-                ) as generation:
-                    stream = client.chat.completions.create(
-                        model=model,
-                        messages=model_messages,
-                        tools=TOOLS,
-                        temperature=0.2,
-                        top_p=0.4,
-                        max_tokens=1024,
-                        reasoning_effort="medium",
-                        stream=True,
-                        stream_options={"include_usage": True},
-                    )
-                    for chunk in stream:
-                        chunk_usage = getattr(chunk, "usage", None)
-                        if chunk_usage is not None:
-                            usage = _usage_record(chunk_usage)
-                        if not chunk.choices:
-                            continue
-                        choice = chunk.choices[0]
-                        delta = choice.delta
-                        finish_reason = choice.finish_reason or finish_reason
-                        reasoning = getattr(delta, "reasoning", None)
-                        if reasoning:
-                            assistant_reasoning += reasoning
-                            emit("thinking", {"token": reasoning})
-                        if delta.content:
-                            assistant_content += delta.content
-                            emit("message", {"token": delta.content})
-                        if delta.tool_calls:
-                            for tool_call in delta.tool_calls:
-                                index = tool_call.index
-                                if index not in tool_calls:
-                                    tool_calls[index] = {
-                                        "id": "", "name": "", "arguments": ""}
-                                if tool_call.id:
-                                    tool_calls[index]["id"] = tool_call.id
-                                if tool_call.function:
-                                    if tool_call.function.name:
-                                        tool_calls[index]["name"] = tool_call.function.name
-                                    if tool_call.function.arguments:
-                                        tool_calls[index]["arguments"] += tool_call.function.arguments
-
-                    generation_latency_ms = round(
-                        (time.perf_counter() - generation_started_at) * 1000, 3)
-                    generation_record = {
-                        "iteration": iteration,
-                        "model": model,
-                        "finish_reason": finish_reason,
-                        "content": assistant_content,
-                        "reasoning": assistant_reasoning or None,
-                        "tool_calls": list(tool_calls.values()),
-                        "usage": usage,
-                        "latency_ms": generation_latency_ms,
-                    }
-                    generation.update(
-                        output=generation_record,
-                        usage_details={key: value for key, value in (usage or {}).items() if key in {
-                            "input_tokens", "output_tokens", "total_tokens"} and value is not None},
-                    )
+                
+                generation_record = await _stream_langchain_generation(
+                    model_with_tools, model_messages, model, iteration, emit)
+                
                 llm_requests.append(generation_record)
 
-                if tool_calls:
-                    serialized_tool_calls = [
-                        {"id": tool_call["id"], "type": "function", "function": {
-                            "name": tool_call["name"], "arguments": tool_call["arguments"]}}
-                        for tool_call in tool_calls.values()
-                    ]
-                    add_or_update_conv([{"role": "assistant", "content": assistant_content,
-                                       "tool_calls": serialized_tool_calls}], request.user_id, request.conv_id)
-                    for tool_call in tool_calls.values():
-                        emit("tool_call", {
-                             "data": "calling tool " + tool_call["name"]})
-                        try:
-                            arguments = json.loads(tool_call["arguments"])
-                            if not isinstance(arguments, dict):
-                                raise ValueError(
-                                    "Tool arguments must be a JSON object")
-                            call = run_tool(tool_call["name"], **arguments)
-                        except Exception as error:
-                            call = {
-                                "name": tool_call["name"],
-                                "arguments": tool_call["arguments"],
-                                "status": "error",
-                                "result": {"status": "error", "data": None, "error": {"type": type(error).__name__, "message": str(error)}},
-                                "error": {"type": type(error).__name__, "message": str(error)},
-                                "latency_ms": 0.0,
-                            }
-                        calls.append(call)
-                        _add_to_evaluation_view(result["evaluation"], call)
-                        emit("tool_result", {
-                             "name": tool_call["name"], "result": call["result"]})
-                        add_or_update_conv([{"role": "tool", "tool_call_id": tool_call["id"], "name": tool_call["name"], "content": json.dumps(
-                            call["result"], default=str)}], request.user_id, request.conv_id)
-                    continue
+                if generation_record["tool_calls"]:
+                    return {
+                        "iteration": iteration,
+                        "model_messages": model_messages,
+                        "generation_record": generation_record,
+                    }
 
-                final_answer = assistant_content
-                termination_reason = "final_answer"
+                final_answer = generation_record["content"]
                 add_or_update_conv(
-                    [{"role": "assistant", "content": assistant_content}], request.user_id, request.conv_id)
-                break
+                    [{"role": "assistant", "content": final_answer}], request.user_id, request.conv_id)
+                return {
+                    "iteration": iteration,
+                    "model_messages": model_messages,
+                    "generation_record": generation_record,
+                    "final_answer": final_answer,
+                    "termination_reason": "final_answer",
+                }
+
+            async def run_graph_tool(tool_call: dict[str, str]) -> dict[str, Any]:
+                emit("tool_call", {
+                     "data": "calling tool " + tool_call["name"]})
+                try:
+                    arguments = json.loads(tool_call["arguments"])
+                    if not isinstance(arguments, dict):
+                        raise ValueError(
+                            "Tool arguments must be a JSON object")
+                    return await _run_tool_async(tool_call["name"], arguments)
+                except Exception as error:
+                    return {
+                        "name": tool_call["name"],
+                        "arguments": tool_call["arguments"],
+                        "status": "error",
+                        "result": {"status": "error", "data": None, "error": {
+                            "type": type(error).__name__, "message": str(error)}},
+                        "error": {"type": type(error).__name__, "message": str(error)},
+                        "latency_ms": 0.0,
+                    }
+
+            async def tools_node(state: AgentGraphState) -> AgentGraphState:
+                generation_record = state["generation_record"]
+                tool_calls = generation_record["tool_calls"]
+                serialized_tool_calls = [
+                    {"id": tool_call["id"], "type": "function", "function": {
+                        "name": tool_call["name"], "arguments": tool_call["arguments"]}}
+                    for tool_call in tool_calls
+                ]
+                add_or_update_conv([{"role": "assistant", "content": generation_record["content"],
+                                   "tool_calls": serialized_tool_calls}], request.user_id, request.conv_id)
+                tool_records = await asyncio.gather(
+                    *(run_graph_tool(tool_call) for tool_call in tool_calls))
+
+                for tool_call, tool_record in zip(tool_calls, tool_records):
+                    _add_to_evaluation_view(result["evaluation"], tool_record)
+                    emit("tool_result", {
+                         "name": tool_call["name"], "result": tool_record["result"]})
+                    add_or_update_conv([{"role": "tool", "tool_call_id": tool_call["id"], "name": tool_call["name"], "content": json.dumps(
+                        tool_record["result"], default=str)}], request.user_id, request.conv_id)
+
+                return {"calls": state["calls"] + tool_records}
+
+            def route_after_model(state: AgentGraphState) -> Literal["tools", "end"]:
+                if state["generation_record"]["tool_calls"]:
+                    return "tools"
+                return "end"
+
+            def route_after_tools(state: AgentGraphState) -> Literal["model", "end"]:
+                if state["iteration"] >= MAX_ITERATIONS:
+                    return "end"
+                return "model"
+
+            agent_graph_builder = StateGraph(AgentGraphState)
+            agent_graph_builder.add_node("model", model_node)
+            agent_graph_builder.add_node("tools", tools_node)
+            agent_graph_builder.add_edge(START, "model")
+            agent_graph_builder.add_conditional_edges(
+                "model", route_after_model, {"tools": "tools", "end": END})
+            agent_graph_builder.add_conditional_edges(
+                "tools", route_after_tools, {"model": "model", "end": END})
+            agent_graph = agent_graph_builder.compile()
+            final_state = asyncio.run(agent_graph.ainvoke(
+                {"iteration": 0, "calls": calls},
+                config={"recursion_limit": MAX_ITERATIONS * 2 + 1},
+            ))
+            calls[:] = final_state["calls"]
+            final_answer = final_state.get("final_answer", "")
+            termination_reason = final_state.get(
+                "termination_reason", "max_iterations")
 
             result["status"] = "success"
     except Exception as error:
