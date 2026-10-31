@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # ----------------------------------------LOGGER----------------------------------------
 logging.basicConfig(
-    filename="logs/ai_backend.log",
+    filename="logs/agent.log",
     filemode="a",  # 'a' appends new logs; 'w' overwrites each run
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(filename)s - %(message)s",

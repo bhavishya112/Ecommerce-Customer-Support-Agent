@@ -200,6 +200,7 @@
 #     time.sleep(0.5)
 #     emit("thinking", {"token": "fucker"})
 
+from python.tools import ProductQuery, PriceFilter
 from python.tools import search_products, _vector_matches_for_field
 import json
 from python.fill_db import fetch_product_field_values
@@ -207,10 +208,21 @@ from python.db_connection import create_qdrant_connection, create_connection
 mariadbclient = create_connection()
 vectordbclient = create_qdrant_connection()
 
+query = ProductQuery(
+    name="Nike shoes",
+    category="Footwear",
+    price=[
+        PriceFilter(operator="gt", value=50),
+        PriceFilter(operator="lt", value=100),
+    ],
+    supplier="Nike",
+    sort="ASC",
+
+)
 
 # print(search_products( {'category': 'gpu','price': [{'operator': 'gt', 'value': 300},{'operator': 'lt', 'value': 700}], 'supplier': ''}))
-print(search_products({'category': 'graphics card',
-      'name': 'nvidia', 'price': [], 'supplier': ''}, ""))
+print(search_products.invoke(
+    input={'query': query, 'cur': None, 'retry': False}))
 
 # print(_vector_matches_for_field(vectordbclient,"supplier","Intel"))
 # from python.fill_db import fetch_product_field_values

@@ -94,7 +94,7 @@ To use the project, you'll have to do some preprocessing (if you want to use the
   
 ## Logs
 All the logging is done in `logs`<br>
-For agent.py related it is `ai_backend.log`<br>
+For agent.py related it is `agent.log`<br>
 and for php related it is `php_logs.log`<br>
 `test.log` is only for testing purposes<br>
 `tools.log` is for tool calls

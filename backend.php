@@ -1,4 +1,17 @@
 <?php
+/*
+I did find a few issues in backend.php:
+
+The PHP request timeout and the cURL timeout conflict. PHP sets a 180-second limit at line 7, but cURL is configured
+with no timeout at line 100. A long-running stream could be terminated by PHP even though cURL is still waiting. This
+could interrupt the stream, but it would not explain the Python traceback.
+Failures are also logged as successes. After the cURL error branch, execution unconditionally writes a success log at
+line 144. So that log entry doesn’t prove FastAPI completed successfully.
+The PHP session stays open during the stream. session_start() at line 20 holds the session lock until the request ends.
+Concurrent requests using the same session may block each other.
+The query validation assumes query is a string. A malformed JSON body or non-string query could cause a PHP error before
+the request reaches FastAPI.
+*/
 
 header("Access-Control-Allow-Origin: *"); // or specify "http://localhost:8000"
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
@@ -153,3 +166,4 @@ try {
         $logdir
     );
 }
+
