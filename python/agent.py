@@ -10,10 +10,10 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from threading import Thread
 from typing import Any, Callable, Literal, TypedDict
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
+from langchain.tools import BaseTool
 from langfuse import observe, propagate_attributes, get_client
 import pprint
 from python.tools import web_search, query_ui, get_order, get_product, search_products
@@ -37,12 +37,14 @@ sys.stderr.reconfigure(encoding="utf-8", newline="\n")
 
 
 # ==================================LOGGER=========================================================
-logger = logging.getLogger(__name__)
 
 logger = logging.getLogger("agent")
 logger.setLevel(logging.INFO)
 
-handler = logging.FileHandler("logs/ai_backend.log", encoding="utf-8")
+# logger2 = logging.getLogger("model_node")
+# logger2.setLevel(logging.DEBUG)
+
+handler = logging.FileHandler("logs/agent.log", encoding="utf-8")
 handler.setFormatter(logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s",
     datefmt="%d %B %I:%M %p"
@@ -51,6 +53,22 @@ handler.setFormatter(logging.Formatter(
 
 logger.addHandler(handler)
 logger.propagate = False
+
+# logger2.addHandler(handler)
+# logger2.propagate = False
+
+logger2 = logging.getLogger("model_node")
+logger2.setLevel(logging.DEBUG)
+
+nodes_handler = logging.FileHandler("logs/nodes.log", encoding="utf-8")
+nodes_handler.setFormatter(logging.Formatter(
+    "%(asctime)s %(levelname)s %(message)s",
+    datefmt="%d %B %I:%M %p"
+))
+
+logger2.addHandler(nodes_handler)
+logger2.propagate = False
+
 # ============================================================================================
 
 
@@ -276,15 +294,16 @@ TOOLS = [
 AVAILABLE_TOOLS: dict[str, Callable] = {
     "web_search": web_search, "query_ui": query_ui, "get_order": get_order, "get_product": get_product, "search_products": search_products}
 
-
 # ------------------------------------------------------------------
 # Executes tool calls returned by the LLM (Not to be modified with new tool)
 # ------------------------------------------------------------------
+
+
 @observe(as_type="tool", name="agent-tool")
-def run_tool(tool_name: str, **args: Any) -> dict[str, Any]:
+async def run_tool(tool_name: str, **args: Any) -> dict[str, Any]:
     """Run exactly one agent tool and retain the evidence needed for evaluation."""
     started_at = time.perf_counter()
-    tool = AVAILABLE_TOOLS.get(tool_name)
+    tool: BaseTool = AVAILABLE_TOOLS.get(tool_name)
     langfuse.update_current_span(name=tool_name, input={"arguments": args})
     if tool is None:
         result = {
@@ -294,7 +313,7 @@ def run_tool(tool_name: str, **args: Any) -> dict[str, Any]:
         }
     else:
         try:
-            result = tool(**args)
+            result = await tool.ainvoke(args)
         except Exception as error:
             logger.exception(
                 "tool %s raised an unhandled exception", tool_name)
@@ -338,7 +357,11 @@ def add_or_update_conv(message: list[dict[str, str]], user_id: int, conv_id: int
         CONVERSATIONS[user_id] = {conv_id: [message[0]]}
     else:
         CONVERSATIONS[user_id][conv_id].extend(message)
-        CONVERSATIONS[user_id][conv_id] = CONVERSATIONS[user_id][conv_id][-5:]
+        conversation = CONVERSATIONS[user_id][conv_id]
+        start = max(0, len(conversation) - 5)
+        while start and conversation[start].get("role") == "tool":
+            start -= 1
+        CONVERSATIONS[user_id][conv_id] = conversation[start:]
     logger.info("⚠️ [CONVERSATIONS] : %s", json.dumps(
         CONVERSATIONS, indent=4, default=str))
 
@@ -371,24 +394,24 @@ async def chat(req: ChatRequest):
     # add_or_update_conv(req.query, req.user_id, req.conv_id)
     emitter = QueueEmitter()
 
-    def run_agent():
-        Agent(MODEL, req, emitter.emit)
-
-    Thread(target=run_agent).start()
-
     async def stream():
-
-        while True:
-
-            event = await emitter.queue.get()
-
-            yield (
-                f"event: {event['event']}\n"
-                f"data: {json.dumps(event['data'], ensure_ascii=False,default=str)}\n\n"
-            )
-
-            if event["event"] == "done":
-                break
+        agent_task = asyncio.create_task(Agent(MODEL, req, emitter.emit))
+        try:
+            while True:
+                event = await emitter.queue.get()
+                yield (
+                    f"event: {event['event']}\n"
+                    f"data: {json.dumps(event['data'], ensure_ascii=False,default=str)}\n\n"
+                )
+                if event["event"] == "done":
+                    break
+        finally:
+            if not agent_task.done():
+                agent_task.cancel()
+            try:
+                await agent_task
+            except asyncio.CancelledError:
+                pass
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -433,7 +456,8 @@ def _build_langchain_model(model: str):
         streaming=True,
         stream_usage=True,
     )
-    return chat_model.bind_tools(TOOLS, strict=True)
+    tools = [query_ui, web_search, search_products, get_product, get_order]
+    return chat_model.bind_tools(tools, strict=True)
 
 
 def _content_text(content: Any) -> str:
@@ -544,7 +568,7 @@ async def _stream_langchain_generation(
 
 async def _run_tool_async(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Keep the public synchronous tool contract while avoiding event-loop blocking."""
-    return await asyncio.to_thread(run_tool, tool_name, **arguments)
+    return await run_tool(tool_name, **arguments)
 
 
 def _empty_evaluation_view() -> dict[str, Any]:
@@ -556,19 +580,19 @@ def _empty_evaluation_view() -> dict[str, Any]:
     }
 
 
-def _add_to_evaluation_view(view: dict[str, Any], call: dict[str, Any]) -> None:
+def _add_to_evaluation_view(view: dict[str, Any], call_record: dict[str, Any]) -> None:
     """Project tool records into the same categories used by the dataset expected output."""
-    view["tools"].append(call["name"])
-    if call["status"] != "success":
+    view["tools"].append(call_record.get("name"))
+    if call_record.get("status") != "success":
         return
-    data = (call["result"].get("data") or {})
-    if call["name"] == "get_order" and data.get("order") is not None:
+    data = (call_record.get("result", {}).get("data") or {})
+    if call_record.get("name", {}) == "get_order" and data.get("order") is not None:
         view["orders"]["rows"].append(data["order"])
-    elif call["name"] == "search_products":
+    elif call_record.get("name") == "search_products":
         view["products"]["rows"].extend(data.get("rows") or [])
-    elif call["name"] == "get_product" and data.get("product") is not None:
+    elif call_record.get("name") == "get_product" and data.get("product") is not None:
         view["products"]["rows"].append(data["product"])
-    elif call["name"] == "query_ui":
+    elif call_record.get("name") == "query_ui":
         collection = data.get("collection", "ui_elements")
         view["ui_elements"][collection] = {
             "retrieved_document_ids": data.get("retrieved_document_ids") or [],
@@ -587,7 +611,7 @@ class AgentGraphState(TypedDict, total=False):
 
 
 @observe(as_type="agent", name="ecommerce-support-agent")
-def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -> dict[str, Any]:
+async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -> dict[str, Any]:
     """Run the agent and return a complete, evaluator-ready execution record."""
     request = _normalize_request(req)
     started_at = time.perf_counter()
@@ -618,14 +642,14 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
             trace_name="ecommerce-support-agent",
         ):
             langfuse.update_current_span(input={"question": request.query})
-            system_prompt = """
-        You are helpful chatbot for our customers, you can take multiple turns if a tool call fails
+            system_prompt = \
+                """You are helpful chatbot for our customers, you can take multiple turns if a tool call fails
         UI information may ONLY come from tool outputs. fill retry=True in case of tool retry attempt.
         IMPORTANT : For ui related queries, provide full information such as size,position,color, flow like myprofile>billing>details
 
         Never answer UI-related questions from your internal knowledge or reasoning. If no tool has returned the requested information, reply that it could not be found instead of guessing.
-        You are ReAct (Reasoning + Acting) Agent and can help with user navigation and up-to-date information 
-        
+        You are ReAct (Reasoning + Acting) Agent and can help with user navigation and up-to-date information
+
         Personality:
         Very User Friendly : give your best to help, Factually correct : You do not deviate from provided information
 
@@ -642,14 +666,15 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
             # conversation records, events, and evaluator-facing output fields.
             # ------------------------------------------------------------------
             async def model_node(state: AgentGraphState) -> AgentGraphState:
+                logger2.debug("📜📜 model_node state : %s", state)
                 iteration = state["iteration"] + 1
                 result["agent"]["iterations"] = iteration
                 model_messages = [{"role": "system", "content": system_prompt}
                                   ] + CONVERSATIONS[request.user_id][request.conv_id]
-                
+
                 generation_record = await _stream_langchain_generation(
                     model_with_tools, model_messages, model, iteration, emit)
-                
+
                 llm_requests.append(generation_record)
 
                 if generation_record["tool_calls"]:
@@ -671,6 +696,7 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
                 }
 
             async def run_graph_tool(tool_call: dict[str, str]) -> dict[str, Any]:
+                logger2.debug("🚀🚀 tool_runner node state : %s", tool_call)
                 emit("tool_call", {
                      "data": "calling tool " + tool_call["name"]})
                 try:
@@ -691,6 +717,7 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
                     }
 
             async def tools_node(state: AgentGraphState) -> AgentGraphState:
+                logger2.debug("⚙️⚙️ tool_node state : %s", state)
                 generation_record = state["generation_record"]
                 tool_calls = generation_record["tool_calls"]
                 serialized_tool_calls = [
@@ -700,17 +727,17 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
                 ]
                 add_or_update_conv([{"role": "assistant", "content": generation_record["content"],
                                    "tool_calls": serialized_tool_calls}], request.user_id, request.conv_id)
-                tool_records = await asyncio.gather(
+                tool_call_records = await asyncio.gather(
                     *(run_graph_tool(tool_call) for tool_call in tool_calls))
 
-                for tool_call, tool_record in zip(tool_calls, tool_records):
+                for tool_call, tool_record in zip(tool_calls, tool_call_records):
                     _add_to_evaluation_view(result["evaluation"], tool_record)
                     emit("tool_result", {
                          "name": tool_call["name"], "result": tool_record["result"]})
                     add_or_update_conv([{"role": "tool", "tool_call_id": tool_call["id"], "name": tool_call["name"], "content": json.dumps(
                         tool_record["result"], default=str)}], request.user_id, request.conv_id)
 
-                return {"calls": state["calls"] + tool_records}
+                return {"calls": state["calls"] + tool_call_records}
 
             def route_after_model(state: AgentGraphState) -> Literal["tools", "end"]:
                 if state["generation_record"]["tool_calls"]:
@@ -731,10 +758,10 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
             agent_graph_builder.add_conditional_edges(
                 "tools", route_after_tools, {"model": "model", "end": END})
             agent_graph = agent_graph_builder.compile()
-            final_state = asyncio.run(agent_graph.ainvoke(
+            final_state = await agent_graph.ainvoke(
                 {"iteration": 0, "calls": calls},
                 config={"recursion_limit": MAX_ITERATIONS * 2 + 1},
-            ))
+            )
             calls[:] = final_state["calls"]
             final_answer = final_state.get("final_answer", "")
             termination_reason = final_state.get(
@@ -742,6 +769,9 @@ def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Callable) -
 
             result["status"] = "success"
     except Exception as error:
+        logger2.exception(error)
+        logger.exception(
+            f"📜📜 CONVERSATIONS : {json.dumps(CONVERSATIONS[request.user_id][request.conv_id],indent=4)} ")
         logger.exception("agent execution failed")
         errors.append({"type": type(error).__name__, "message": str(error)})
         termination_reason = "error"

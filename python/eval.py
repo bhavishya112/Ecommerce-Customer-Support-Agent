@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -22,7 +23,7 @@ load_dotenv(".env")
 
 DATASET_NAME = "SET1"
 # DATASET_NAME = "test-set"
-EXPERIMENT_NAME = "V0"
+EXPERIMENT_NAME = "V1"
 RETRIEVAL_K = 5
 JUDGE_BASE_URL = "https://integrate.api.nvidia.com/v1"
 JUDGE_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -52,10 +53,10 @@ class BenchmarkEmitter:
         return round((self.first_message_at - self.started_at) * 1000, 3)
 
 
-def my_task(*, item, **kwargs) -> dict[str, Any]:
+async def my_task(*, item, **kwargs) -> dict[str, Any]:
     """Run one dataset item and return the full agent record plus TTFT."""
     emitter = BenchmarkEmitter()
-    agent_result = Agent(model=MODEL, req=item.input, emit=emitter.emit)
+    agent_result = await Agent(model=MODEL, req=item.input, emit=emitter.emit)
     return {
         "agent_result": agent_result,
         "ttft_ms": emitter.ttft_ms,
@@ -635,8 +636,8 @@ result = dataset.run_experiment(
         quality_evaluator,
     ],
     run_evaluators=[latency_percentiles, ui_mrr],
-    max_concurrency=4,
-    metadata={"agent_version": "v0", "dataset": DATASET_NAME},
+    max_concurrency=1,
+    metadata={"agent_version": "v1", "dataset": DATASET_NAME},
 )
 
 print(result.format())
