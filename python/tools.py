@@ -1,4 +1,7 @@
 from __future__ import annotations
+from python.fill_db import FIELD_COLLECTIONS, embed_text
+from pydantic import BaseModel, ConfigDict
+from enum import Enum
 from langfuse import observe
 
 import base64
@@ -13,6 +16,8 @@ from openai import OpenAI
 from pymysql import Error
 from pymysql.cursors import DictCursor
 from python.db_connection import create_connection, create_qdrant_connection
+
+from langchain.tools import tool
 
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
@@ -37,6 +42,23 @@ MODEL_NAME = "all-minilm:l6-v2"
 VECTORDB_PATH = "data/vectordb/ui_vector_db"
 
 
+class PriceFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    operator: Literal["lt", "gt", "et"]
+    value: float
+
+
+class ProductQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str
+    category: str
+    price: list[PriceFilter]
+    supplier: str
+    sort: Literal["ASC", "DESC"]
+
+
 @observe(name="summarize", as_type="tool")
 def summarize(text: str, query: str | None = None) -> dict[str, Any]:
     """Summarize web results while preserving their original source list."""
@@ -58,8 +80,10 @@ def summarize(text: str, query: str | None = None) -> dict[str, Any]:
         return _failure(error)
 
 
-def web_search(query: str, num_results: int = 3,retry:bool = False) -> dict[str, Any]:
-    """Search the web and return stable, structured source records."""
+@tool
+@observe(name="web_search", as_type="tool")
+def web_search(query: str, num_results: int = 3, retry: bool = False) -> dict[str, Any]:
+    """Searches the internet for information using Google-like queries. Use only when user wants upto-date info and not searching any products, not otherwise. Always Preserve URL references with text"""
     try:
         num_results = int(num_results)
         with DDGS() as ddgs:
@@ -84,8 +108,12 @@ def web_search(query: str, num_results: int = 3,retry:bool = False) -> dict[str,
         return _failure(error)
 
 
-def query_ui(question: str, top_k: int = 5, view: Literal["desktop", "mobile"] = "desktop", collection: str = "ui_elements", retry:bool = False) -> dict[str, Any]:
-    """Retrieve UI documents with rank, Chroma document ID, score, and metadata."""
+@tool
+@observe(name="query_ui", as_type="tool")
+def query_ui(question: str, top_k: int = 5, view: Literal["desktop", "mobile"] = "desktop", collection: str = "ui_elements", retry: bool = False) -> dict[str, Any]:
+    """Gets UI context. Use it ONLY when user ask about navigation on our website. Helps with our website navigation. First Ask which device user is on.  Do not add anything by yourself.
+                your answer must necessarily be like : 'Go to middle of the page a wide grid of blue boxes would appear' or 'go to profile > settings > notification'
+                Remember DO NOT reveal dynamic text like student name or applications ids """
     try:
         chroma_client = chromadb.PersistentClient(path=VECTORDB_PATH)
         chroma_collection = chroma_client.get_collection(collection)
@@ -120,8 +148,11 @@ SEARCH_FIELD_MAP = {"name": "name",
                     "category": "category", "supplier": "supplier"}
 
 
-def get_order(order_id: str,retry:bool = False) -> dict[str, Any]:
-    """Fetch an order and distinguish absence from database failure."""
+@tool
+@observe(name="get_order", as_type="tool")
+def get_order(order_id: str, retry: bool = False) -> dict[str, Any]:
+    """Gets Order details of a particular order_id"""
+
     connection = None
     try:
         connection = create_connection()
@@ -161,31 +192,13 @@ def _decode_cursor(cursor: Optional[str]) -> Optional[dict[str, Any]]:
         return None
 
 
-def search_products(query: dict[str, Any], cur: str | None = None,retry:bool = False) -> dict[str, Any]:
-    """Search products using optional text and numeric filters.
-
-    Uses vector-expanded fuzzy matching for name, category, and supplier fields
-    before applying SQL filters for price. Returns a list of matching products
-    or a descriptive message when no results are found.
-
-    Query = 
-    {
-        "name":string,
-        "category":string,
-        "price": [
-        {
-            "operator" : enum["lt","gt","et"],
-            "value" : float,   
-        }],
-        "supplier" : "string",
-        "sort" : ["ASC","DESC"]
-
-    }
-
-    Returns:
-        Many things but mainly Rows and Cursor to the next chunk
-
+@tool
+@observe(name="search_products", as_type="tool")
+def search_products(query: ProductQuery, cur: str | None = None, retry: bool = False) -> dict[str, Any]:
     """
+    Search products in our product inventory using query variables using USD currency. sort is ASC by default. the results are paginated and use cur (cursor) to remember position. (by defualt empty string)
+    """
+    query = query.model_dump()
     connection = None
     try:
         connection = create_connection()
@@ -244,8 +257,10 @@ def search_products(query: dict[str, Any], cur: str | None = None,retry:bool = F
             connection.close()
 
 
-def get_product(product_id: str,retry:bool = False) -> dict[str, Any]:
-    """Fetch a product and distinguish absence from database failure."""
+@tool
+@observe(name="get_product", as_type="tool")
+def get_product(product_id: str, retry: bool = False) -> dict[str, Any]:
+    """Get details of a product"""
     connection = None
     try:
         connection = create_connection()
@@ -289,8 +304,6 @@ def _correct_search_terms(query: dict[str, Any]) -> dict[str, Any]:
 
 
 def _vector_matches_for_field(qdrant_connection: Any, field_name: str, value: str) -> list[str]:
-    from python.fill_db import FIELD_COLLECTIONS, embed_text
-
     vector = embed_text(value)
     collection_name = FIELD_COLLECTIONS[field_name]
     if hasattr(qdrant_connection, "search"):
