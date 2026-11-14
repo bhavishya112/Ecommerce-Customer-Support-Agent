@@ -29,3 +29,5 @@ python/fill_db.py
 
 *.json
 *.ipynb
+.vercel
+.env*
