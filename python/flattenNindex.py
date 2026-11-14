@@ -6,8 +6,8 @@ Consumes the JSON produced by the new extract_ui_tree() scraper and:
   3. Provides a query() function to test retrieval.
 
 Usage:
-    python flatten_and_index.py snapshot.json --page --description leave
-    python flatten_and_index.py snapshot.json --page --description leave --query "submit button on landingpage"
+    python -m python.flattenNindex snapshot.json --page leave
+    python -m python.flattenNindex snapshot.json --page leave --query "submit button on landingpage"
 
 Requires:
     pip install chromadb sentence-transformers --break-system-packages
@@ -15,20 +15,21 @@ Requires:
 """
 
 from openai import OpenAI
-import chromadb
+from qdrant_client.models import Distance, VectorParams, PointStruct
+from python.db_connection import create_qdrant_connection
 import uuid
 import json
 import argparse
 import logging
 import traceback
 from python.make_readable import color_readable
-
+from python.db_connection import get_embeddings
 logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------LOGGER----------------------------------------
 logging.basicConfig(
-    filename="logs/agent.log",
+    filename="logs/index_ui.log",
     filemode="a",  # 'a' appends new logs; 'w' overwrites each run
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(filename)s - %(message)s",
@@ -39,8 +40,9 @@ logging.basicConfig(
 
 openaiclient = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
-MODEL_NAME = "all-minilm:l6-v2"  # small, fast, good enough for UI-label matching
+# MODEL_NAME = "all-minilm:l6-v2"  # small, fast, good enough for UI-label matching
 COLLECTION_NAME = "amazon_customer"
+QDRANT_BATCH_SIZE = 64
 
 FULL_TEXT_TRUNCATE = 300  # cap on raw innerText stored in metadata
 
@@ -107,7 +109,7 @@ def _pseudo_selector(node: dict) -> str:
     return tag
 
 
-def flatten(node: dict, path: str, page: str, description: str, view="desktop", rows: list = None):
+def flatten(node: dict, path: str, page: str, description: str = "", view="desktop", rows: list = None):
     """
     Recursively Walks the nested children tree produced by the scraper.py
     and returns a flat list of dict rows, one per element
@@ -136,16 +138,16 @@ def flatten(node: dict, path: str, page: str, description: str, view="desktop", 
             "page": page,
             "description": description,
             "label": label,
-            "text": own_text,
+            "text": (own_text or "")[:100],
             "position": node.get("position"),
             "type": node.get("role"),
             "color": color_readable(node.get("color")),
             "size_cm": node.get("size"),
             "view": view,
             # "state": None,  # no AJAX/state discovery in the new scraper
-            "full_text": (node.get("text") or "")[:FULL_TEXT_TRUNCATE],
+            "full_text": (node.get("text") or "")[:100],
             "visible": node.get("visible"),
-            "class_name": node.get("className"),
+            "class_name": (node.get("className") or "")[:100],
             # "path": current_path,
             # "tag": node.get("tagName"),
             # closest analogue to the old "type" field
@@ -193,54 +195,83 @@ def build_index(rows: list[dict], db_path: str = "./data/vectordb/ui_vector_db")
         rows (list) : The flattened ui tree in the form [{"page":"pagename","size_cm":n...}...]
         db_path (pathlike str) : the relative path to where the vectordb collection/data goes"""
 
-    client = chromadb.PersistentClient(path=db_path)
-    collection = client.get_or_create_collection(COLLECTION_NAME)
+    if not rows:
+        logger.info("No UI rows to index")
+        return
 
-    # searchable text = path + own text, this is what gets embedded
-    documents = []
-    # import IPython
-    # IPython.embed()
-    for r in rows:
-        if r.get("tag") == "body":
-            documents.append(
-                f"{r['page']} : {r['description']}\nlabel : {r['label']}, text : {r['full_text'][:20]}, color : {r['color']}".strip()
+    qdrant_connection = create_qdrant_connection()
+    if not qdrant_connection:
+        print("Failed to connect to Qdrant")
+        return
+
+    collection_exists = qdrant_connection.collection_exists(COLLECTION_NAME)
+    total_batches = (len(rows) + QDRANT_BATCH_SIZE - 1) // QDRANT_BATCH_SIZE
+
+    for batch_number, start in enumerate(
+        range(0, len(rows), QDRANT_BATCH_SIZE), start=1
+    ):
+        batch_rows = rows[start: start + QDRANT_BATCH_SIZE]
+        # searchable text = path + own text, this is what gets embedded
+        documents = []
+        for row in batch_rows:
+            if row.get("tag") == "body":
+                documents.append(
+                    f"{row['page']} : {row['description']}\nlabel : {row['label']}, "
+                    f"text : {row['full_text'][:20]}, color : {row['color']}".strip()
+                )
+            else:
+                documents.append(
+                    f"{row['page']} :\nlabel : {row['label']},"
+                    f"text : {row['full_text'][:20]},color : {row['color']}".strip()
+                )
+
+        embeddings = get_embeddings(documents)
+        if len(embeddings) != len(batch_rows):
+            raise ValueError(
+                f"Expected {len(batch_rows)} embeddings for batch "
+                f"{batch_number}, got {len(embeddings)}"
             )
-        else:
-            documents.append(
-                f"{r['page']} :\nlabel : {r['label']},text : {r['full_text'][:20]},color : {r['color']}".strip())
 
-    # response = openaiclient.embeddings.create(
-    #     input=documents, model=MODEL_NAME)
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("all-minilm-l6-v2")
-    embeddings = model.encode(documents).tolist()
-    # embeddings = [emb.embedding for emb in response.data]
+        if batch_number == 1 and not collection_exists:
+            qdrant_connection.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=len(embeddings[0]), distance=Distance.COSINE
+                ),
+            )
 
-    ids = [r["id"] for r in rows]
-    # print(ids)
-    metadatas = []
-    for r in rows:
-        # print(r)
-        # Chroma metadata values must be str/int/float/bool (or None)
-        meta = dict(r)
-        meta.pop("id", None)
-        # print(meta['id'])
-        for key, value in meta.items():
-            if value is None:
-                continue
-            if not isinstance(value, (str, int, float, bool)):
-                meta[key] = json.dumps(value)
-        metadatas.append(meta)
-    try:
-        collection.upsert(
-            ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas
+        points = []
+        for row, embedding, document in zip(batch_rows, embeddings, documents):
+            payload = dict(row)
+            payload["document"] = document
+            point_id = row.get("id") or str(uuid.uuid4())
+            points.append(
+                PointStruct(id=point_id, vector=embedding, payload=payload)
+            )
+
+        try:
+            qdrant_connection.upsert(
+                collection_name=COLLECTION_NAME, points=points
+            )
+        except Exception:
+            logger.exception(
+                "Failed to upsert Qdrant batch %d/%d (%d points)",
+                batch_number,
+                total_batches,
+                len(points),
+            )
+            raise
+
+        logger.info(
+            "Upserted Qdrant batch %d/%d (%d points)",
+            batch_number,
+            total_batches,
+            len(points),
         )
-    except Exception as e:
-        logger.error(e)
-        print(e)
 
-        # print(traceback.print_exc())
-    print(f"Indexed {len(rows)} elements into '{db_path}'")
+    print(
+        f"Indexed {len(rows)} elements into Qdrant collection '{COLLECTION_NAME}'"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,19 +281,25 @@ def build_index(rows: list[dict], db_path: str = "./data/vectordb/ui_vector_db")
 
 def query(question: str, db_path: str = "data/vectordb/ui_vector_db", top_k: int = 5):
     """this queries the vectordb for UI data and returns top_k matches with scores"""
-    client = chromadb.PersistentClient(path=db_path)
-    collection = client.get_or_create_collection(COLLECTION_NAME)
+    qdrant_connection = create_qdrant_connection()
+    if not qdrant_connection:
+        return []
 
-    response = openaiclient.embeddings.create(input=question, model=MODEL_NAME)
-    embedding = [emb.embedding for emb in response.data]
-    results = collection.query(query_embeddings=embedding, n_results=top_k)
+    # response = openaiclient.embeddings.create(input=question, model=MODEL_NAME)
+    # embedding = response.data[0].embedding
+    embedding = get_embeddings([question])[0]
+    query_result = qdrant_connection.query_points(
+        collection_name=COLLECTION_NAME, query=embedding, limit=top_k, with_payload=True
+    )
+    points = getattr(query_result, "points", query_result)
 
     matches = []
-    for doc, meta, dist in zip(
-        results["documents"][0], results["metadatas"][0], results["distances"][0]
-    ):
-        meta = dict(meta)
-        matches.append({"score": round(1 - dist, 3), "text": doc, **meta})
+    for point in points:
+        payload = dict(getattr(point, "payload", {}) or {})
+        doc = payload.pop("document", None) or payload.pop("text", "")
+        score = getattr(point, "score", 0.0)
+        matches.append({"score": round(score, 3)
+                       if score is not None else 0.0, "text": doc, **payload})
 
     return matches
 

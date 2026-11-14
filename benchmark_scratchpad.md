@@ -406,7 +406,7 @@ total tests
         {"id2":"----",etc,etc}
       ]
   },
-    "ui_elements":{
+    "amazon_customer":{
       "args" :[{
           -----
                }],
