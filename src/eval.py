@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from langfuse import Evaluation, get_client
 from openai import OpenAI
 
-from python.agent import Agent, MODEL
+from src.agent import Agent, MODEL
 
 from rapidfuzz import fuzz
 
@@ -89,7 +89,7 @@ def _as_string_ids(value: Any) -> set[str]:
 _ARGUMENT_SECTIONS = {
     "orders": "get_order",
     "products": "search_products",
-    "ui_elements": "query_ui",
+    "amazon_customer": "query_ui",
     "search_results": "web_search",
     "product": "get_product",
     "get_order": "get_order",
@@ -247,12 +247,12 @@ def argument_correctness(*, output, expected_output, **kwargs):
 def ui_retrieval_evaluator(*, output, expected_output, **kwargs):
     """Compute grouped Recall@5, Precision@5, and MRR for query_ui cases."""
     expected_output = expected_output or {}
-    exp_doc_groups = (expected_output.get("ui_elements") or {}).get("docs")
+    exp_doc_groups = (expected_output.get("amazon_customer") or {}).get("docs")
     if not exp_doc_groups:
         return []
 
     observed_ui = (_agent_result(output).get(
-        "evaluation") or {}).get("ui_elements") or {}
+        "evaluation") or {}).get("amazon_customer") or {}
     # The expected schema has no collection name. Flatten whichever collections
     # query_ui searched while preserving the order returned by the agent.
     retrieved_ids = []

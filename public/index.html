@@ -607,11 +607,11 @@ async function sendQuery() {
     try {
         abortController = new AbortController();
         isStopped = false;
-        const response = await fetch("http://localhost:8000/backend.php", {
+        const response = await fetch("http://127.0.0.1:8001/chat", {
             signal: abortController.signal,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: query })
+            body: JSON.stringify({ query: query, user_id: 1, conv_id: 1 })
         });
 
         if (!response.ok) {

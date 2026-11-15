@@ -4,6 +4,11 @@ from pathlib import Path
 import pymysql
 from pymysql import Error
 from qdrant_client import QdrantClient
+import openai
+import numpy as np
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 def create_connection():
@@ -40,31 +45,57 @@ def create_connection():
 
 def create_qdrant_connection():
     """
-    Establishes a Qdrant connection and returns the client object.
-    Qdrant has its own Volume on local drive.
+    Creates a Qdrant client using the configured cloud URL and API key.
     """
     if QdrantClient is None:
         print("Qdrant client is not installed. Install qdrant-client.")
         return None
 
     try:
-        qdrant_url = "http://localhost:6333"
+        qdrant_url = os.getenv("QDRANT_BASE_URL")
         qdrant_api_key = os.getenv("QDRANT_API_KEY")
 
-        if qdrant_url:
-            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
-            print("✅ Connection with Qdrant Successfull!")
-            return client
+        if not qdrant_url or not qdrant_api_key:
+            raise ValueError(
+                "QDRANT_BASE_URL and QDRANT_API_KEY must both be configured"
+            )
 
-        raise Exception("Qdrant Connection Un succesfull")
-        # storage_path = os.getenv(
-        #     "QDRANT_PATH",
-        #     str(Path(__file__).resolve().parent / "data" / "qdrant_storage"),
-        # )
-
-        # print("✅ Connection with Qdrant Offline Successfull!")
-        # return QdrantClient(path=storage_path)
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        print("Qdrant cloud client configured.")
+        return client
 
     except Exception as e:
         print(f"Qdrant connection error: {e}")
         return None
+
+
+NIM_API_KEY = os.getenv("NIM_API_KEY")
+NIM_BASE_URL = os.getenv("NIM_BASE_URL")
+EMB_MODEL = "nvidia/nemotron-3-embed-1b"
+
+emb_client = openai.OpenAI(
+    base_url=NIM_BASE_URL,
+    api_key=NIM_API_KEY
+)
+
+
+def get_embeddings(docs: list[str], input_type="passage"):
+    batch_size = 256
+    embeddings = []
+
+    for start in range(0, len(docs), batch_size):
+        response = emb_client.embeddings.create(
+            model=EMB_MODEL,
+            input=docs[start:start + batch_size],
+            extra_body={
+                "input_type": input_type,
+                "truncate": "END"
+            }
+        )
+
+        embeddings.extend(
+            item.embedding
+            for item in sorted(response.data, key=lambda x: x.index)
+        )
+
+    return np.asarray(embeddings, dtype=np.float32)

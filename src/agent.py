@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 from os import environ
 import fastapi
 import traceback
@@ -16,7 +17,7 @@ from langgraph.graph import END, START, StateGraph
 from langchain.tools import BaseTool
 from langfuse import observe, propagate_attributes, get_client
 import pprint
-from python.tools import web_search, query_ui, get_order, get_product, search_products
+from src.tools import web_search, query_ui, get_order, get_product, search_products
 import time
 import uuid
 
@@ -29,7 +30,7 @@ load_dotenv(".env")
 # -------------------------------------load env variables----------------------------------------
 
 GROQ_API_KEY = environ.get("GROQ_API_KEY")
-
+GROQ_BASE_URL = environ.get("GROQ_BASE_URL")
 # -------------------------------------------------------------------------------------------------
 # Force stdout/stderr to use UTF-8 and LF line endings
 sys.stdout.reconfigure(encoding="utf-8", newline="\n")
@@ -47,7 +48,7 @@ logger.setLevel(logging.INFO)
 handler = logging.FileHandler("logs/agent.log", encoding="utf-8")
 handler.setFormatter(logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s",
-    datefmt="%d %B %I:%M %p"
+    datefmt="%d %B %H:%M %p"
 
 ))
 
@@ -368,16 +369,15 @@ def add_or_update_conv(message: list[dict[str, str]], user_id: int, conv_id: int
 # ---------------------------------------------------------------------------------------------------
 
 
-langfuse = get_client()
-
 MAX_ITERATIONS = 5  # Max React Cycle Loop Limit
 MODEL = "openai/gpt-oss-20b"
 # MODEL = "llama3.1:8b"
 
 
+print(environ.get("LANGFUSE_PUBLIC_KEY"))
+langfuse = get_client()
+
 app = FastAPI()
-
-
 # Allow all origins (for testing)
 app.add_middleware(
     CORSMiddleware,
@@ -448,7 +448,7 @@ def _build_langchain_model(model: str):
     chat_model = ChatOpenAI(
         model=model,
         api_key=GROQ_API_KEY,
-        base_url="https://api.groq.com/openai/v1",
+        base_url=GROQ_BASE_URL,
         temperature=0.2,
         top_p=0.4,
         max_tokens=1024,
@@ -456,6 +456,7 @@ def _build_langchain_model(model: str):
         streaming=True,
         stream_usage=True,
     )
+
     tools = [query_ui, web_search, search_products, get_product, get_order]
     return chat_model.bind_tools(tools, strict=True)
 
@@ -576,7 +577,7 @@ def _empty_evaluation_view() -> dict[str, Any]:
         "tools": [],
         "orders": {"rows": []},
         "products": {"rows": []},
-        "ui_elements": {},
+        "amazon_customer": {},
     }
 
 
@@ -593,8 +594,8 @@ def _add_to_evaluation_view(view: dict[str, Any], call_record: dict[str, Any]) -
     elif call_record.get("name") == "get_product" and data.get("product") is not None:
         view["products"]["rows"].append(data["product"])
     elif call_record.get("name") == "query_ui":
-        collection = data.get("collection", "ui_elements")
-        view["ui_elements"][collection] = {
+        collection = data.get("collection", "amazon_customer")
+        view["amazon_customer"][collection] = {
             "retrieved_document_ids": data.get("retrieved_document_ids") or [],
             "results": data.get("results") or [],
         }
@@ -633,6 +634,12 @@ async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Calla
     }
 
     try:
+        # if not langfuse.auth_check():
+        #     print("🧹Langfuse Not Connected!")
+        #     raise Exception("Langfuse not connected")
+        print("PUBLIC:", os.getenv("LANGFUSE_PUBLIC_KEY"))
+        print("SECRET:", bool(os.getenv("LANGFUSE_SECRET_KEY")))
+        print("BASE URL:", os.getenv("LANGFUSE_BASE_URL"))
         with propagate_attributes(
             user_id=str(request.user_id),
             session_id=str(request.conv_id),
@@ -670,7 +677,7 @@ async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Calla
                 iteration = state["iteration"] + 1
                 result["agent"]["iterations"] = iteration
                 model_messages = [{"role": "system", "content": system_prompt}
-                                  ] + CONVERSATIONS[request.user_id][request.conv_id]
+                                  ] + CONVERSATIONS.get(request.user_id, {}).get(request.conv_id)
 
                 generation_record = await _stream_langchain_generation(
                     model_with_tools, model_messages, model, iteration, emit)
@@ -771,7 +778,7 @@ async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Calla
     except Exception as error:
         logger2.exception(error)
         logger.exception(
-            f"📜📜 CONVERSATIONS : {json.dumps(CONVERSATIONS[request.user_id][request.conv_id],indent=4)} ")
+            f"📜📜 CONVERSATIONS : {json.dumps(CONVERSATIONS.get(request.user_id,{}).get(request.conv_id),indent=4)} ")
         logger.exception("agent execution failed")
         errors.append({"type": type(error).__name__, "message": str(error)})
         termination_reason = "error"
