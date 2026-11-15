@@ -1,9 +1,10 @@
 """Populate Qdrant collections from the online_store MariaDB products table."""
 
+from src.db_connection import get_embeddings
 import re
 from uuid import NAMESPACE_URL, uuid5
 
-from python.db_connection import create_connection, create_qdrant_connection
+from src.db_connection import create_connection, create_qdrant_connection
 
 try:
     from qdrant_client.models import Distance, PointStruct, VectorParams
@@ -12,14 +13,9 @@ except ImportError:
     PointStruct = None
     VectorParams = None
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:
-    SentenceTransformer = None
-
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-VECTOR_SIZE = 384
+VECTOR_SIZE = 2048
 FIELD_COLLECTIONS = {
     "name": "products_name",
     "category": "products_category",
@@ -29,24 +25,13 @@ FIELD_COLLECTIONS = {
 _embedding_model = None
 
 
-def get_embedding_model():
-    """Load the embedding model once per process.
-    I seriously don't know why this function exists, dumb function"""
-    global _embedding_model
-    if SentenceTransformer is None:
-        raise ImportError("sentence-transformers is required for embeddings.")
-    if _embedding_model is None:
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    return _embedding_model
-
-
-def embed_text(
-    text, model=SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-):
-    """Return a normalized embedding list for Qdrant search/upsert."""
-    model = model or get_embedding_model()
-    vector = model.encode([str(text)], normalize_embeddings=True)[0]
-    return vector.tolist() if hasattr(vector, "tolist") else list(vector)
+# def embed_text(
+#     text, model=SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+# ):
+#     """Return a normalized embedding list for Qdrant search/upsert."""
+#     model = model or get_embedding_model()
+#     vector = model.encode([str(text)], normalize_embeddings=True)[0]
+#     return vector.tolist() if hasattr(vector, "tolist") else list(vector)
 
 
 def ensure_collections(qdrant_conn):
@@ -140,7 +125,7 @@ def build_points(field_name: str, values: set, model=None):
         points.append(
             PointStruct(
                 id=point_id,
-                vector=embed_text(value, model=model),
+                vector=get_embeddings(value)[0],
                 payload={field_name: extract_name(value)},
             )
         )
@@ -164,7 +149,6 @@ def fill_qdrant_from_mariadb(mariadb_conn=None, qdrant_conn=None, model=None):
         return {"error": "Qdrant connection failed."}
 
     try:
-        model = model or get_embedding_model()
         ensure_collections(qdrant_conn)
         # {name : {name + category}, category : {}, supplier : {}}
         values_by_field = fetch_product_field_values(mariadb_conn)
@@ -195,6 +179,4 @@ if __name__ == "__main__":
 
     maria_conn = db_connection.create_connection()
     qdrant_conn = db_connection.create_qdrant_connection()
-    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-    print(fill_qdrant_from_mariadb(maria_conn, qdrant_conn, model))
+    print(fill_qdrant_from_mariadb(maria_conn, qdrant_conn))

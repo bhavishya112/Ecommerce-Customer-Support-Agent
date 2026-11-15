@@ -1,5 +1,5 @@
 from __future__ import annotations
-from python.fill_db import FIELD_COLLECTIONS, embed_text
+from src.fill_db import FIELD_COLLECTIONS
 from pydantic import BaseModel, ConfigDict
 from enum import Enum
 from langfuse import observe
@@ -10,14 +10,22 @@ import logging
 from typing import Any, Literal, Optional
 from decimal import Decimal
 
-import chromadb
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from ddgs import DDGS
 from openai import OpenAI
 from pymysql import Error
 from pymysql.cursors import DictCursor
-from python.db_connection import create_connection, create_qdrant_connection
+from src.db_connection import create_connection, create_qdrant_connection, get_embeddings
 
 from langchain.tools import tool
+
+from dotenv import load_dotenv
+from os import getenv
+
+load_dotenv(".env")
+NIM_BASE_URL = getenv("NIM_BASE_URL")
+NIM_API_KEY = getenv("NIM_API_KEY")
+
 
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
@@ -37,9 +45,10 @@ def _failure(error: Exception | str, error_type: str | None = None) -> dict[str,
     return {"status": "error", "data": None, "error": {"type": error_type or type(error).__name__, "message": str(error)}}
 
 
-local_client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-MODEL_NAME = "all-minilm:l6-v2"
-VECTORDB_PATH = "data/vectordb/ui_vector_db"
+summarize_client = OpenAI(
+    base_url=NIM_BASE_URL, api_key=NIM_API_KEY)
+# MODEL_NAME = "all-minilm:l6-v2"
+# VECTORDB_PATH = "data/vectordb/ui_vector_db"
 
 
 class PriceFilter(BaseModel):
@@ -64,10 +73,10 @@ def summarize(text: str, query: str | None = None) -> dict[str, Any]:
     """Summarize web results while preserving their original source list."""
     prompt = text + "\n\nGet useful and important details from the text."
     if query:
-        prompt += f"\n\nFocus the summary according to this query:\n{query}"
+        prompt += f"\n\nFocus the summary for this query:\n{query}"
     try:
-        response = local_client.chat.completions.create(
-            model="ibm/granite4.1:3b",
+        response = summarize_client.chat.completions.create(
+            model="nvidia/nemotron-3.5-bolt-e4b",
             messages=[
                 {"role": "system", "content": "You are an expert summarizer. Preserve every URL exactly and keep each URL with the information it supports."},
                 {"role": "user", "content": prompt},
@@ -97,7 +106,7 @@ def web_search(query: str, num_results: int = 3, retry: bool = False) -> dict[st
             "query": query, "results": results, "result_count": len(results), "summary": None}
         source_text = "\n".join(
             f"Result {item['rank']}\nTitle: {item['title']}\nURL: {item['url']}\nSnippet: {item['snippet']}" for item in results)
-        if results and len(source_text) // 4 > 500:
+        if results and 3*len(source_text) // 4 > 500:
             summary_result = summarize(source_text, query)
             if summary_result["status"] == "success":
                 data["summary"] = summary_result["data"]["summary"]
@@ -110,31 +119,49 @@ def web_search(query: str, num_results: int = 3, retry: bool = False) -> dict[st
 
 @tool
 @observe(name="query_ui", as_type="tool")
-def query_ui(question: str, top_k: int = 5, view: Literal["desktop", "mobile"] = "desktop", collection: str = "ui_elements", retry: bool = False) -> dict[str, Any]:
+def query_ui(question: str, top_k: int = 5, view: Literal["desktop", "mobile"] = "desktop", collection: str = "amazon_customer", retry: bool = False) -> dict[str, Any]:
     """Gets UI context. Use it ONLY when user ask about navigation on our website. Helps with our website navigation. First Ask which device user is on.  Do not add anything by yourself.
                 your answer must necessarily be like : 'Go to middle of the page a wide grid of blue boxes would appear' or 'go to profile > settings > notification'
                 Remember DO NOT reveal dynamic text like student name or applications ids """
     try:
-        chroma_client = chromadb.PersistentClient(path=VECTORDB_PATH)
-        chroma_collection = chroma_client.get_collection(collection)
-        embedding_response = local_client.embeddings.create(
-            input=question, model=MODEL_NAME)
-        results = chroma_collection.query(
-            query_embeddings=[item.embedding for item in embedding_response.data], n_results=top_k, where={"view": view}
+        qdrant_connection = create_qdrant_connection()
+        if not qdrant_connection:
+            return _failure("Failed to connect to Qdrant", "DatabaseConnectionError")
+        # embedding_response = local_client.embeddings.create(
+        #     input=question, model=MODEL_NAME)
+        # query_vector = embedding_response.data[0].embedding
+        query_vector = get_embeddings([question])[0]
+        query_filter = Filter(
+            must=[FieldCondition(key="view", match=MatchValue(value=view))]
         )
+
+        query_result = qdrant_connection.query_points(
+            collection_name=collection,
+            query=query_vector,
+            query_filter=query_filter,
+            limit=top_k,
+            with_payload=True,
+        )
+        points = getattr(query_result, "points", query_result)
+
         matches: list[dict[str, Any]] = []
-        for rank, (document_id, document, metadata, distance) in enumerate(
-            zip(results.get("ids", [[]])[0], results.get("documents", [[]])[0], results.get("metadatas", [[]])[0], results.get("distances", [[]])[0]), start=1
-        ):
-            normalized_metadata = dict(metadata or {})
-            if isinstance(normalized_metadata.get("size"), str):
+        for rank, point in enumerate(points, start=1):
+            payload = dict(getattr(point, "payload", {}) or {})
+            document = payload.pop("document", None) or payload.pop("text", "")
+            if isinstance(payload.get("size"), str):
                 try:
-                    normalized_metadata["size"] = json.loads(
-                        normalized_metadata["size"])
+                    payload["size"] = json.loads(payload["size"])
                 except json.JSONDecodeError:
                     pass
-            matches.append({"rank": rank, "document_id": document_id, "score": round(
-                1 - distance, 3), "text": document, "metadata": normalized_metadata})
+            score = getattr(point, "score", 0.0)
+            document_id = str(getattr(point, "id", ""))
+            matches.append({
+                "rank": rank,
+                "document_id": document_id,
+                "score": round(score, 3) if score is not None else 0.0,
+                "text": document,
+                "metadata": payload,
+            })
         logger.info("UI query completed with %d results", len(matches))
         return _success({"query": question, "collection": collection, "view": view, "results": matches, "retrieved_document_ids": [item["document_id"] for item in matches]})
     except Exception as error:
@@ -304,7 +331,7 @@ def _correct_search_terms(query: dict[str, Any]) -> dict[str, Any]:
 
 
 def _vector_matches_for_field(qdrant_connection: Any, field_name: str, value: str) -> list[str]:
-    vector = embed_text(value)
+    vector = get_embeddings([value])[0]
     collection_name = FIELD_COLLECTIONS[field_name]
     if hasattr(qdrant_connection, "search"):
         results = qdrant_connection.search(collection_name=collection_name, query_vector=vector,

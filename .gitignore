@@ -25,3 +25,9 @@ observations.md
 .agents
 
 .infinity_cache
+python/fill_db.py
+
+*.json
+*.ipynb
+.vercel
+.env*

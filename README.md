@@ -78,9 +78,9 @@ To use the project, you'll have to do some preprocessing (if you want to use the
 
    
 ## Step 2.
-1. Now start the agent server by command `uvicorn python.agent:app --host 127.0.0.1 --port 8001`(do not change port, otherwise reset it in backend.php)
-2. Then Start php server by command `php -S php -S 127.0.0.1:8000`(i use it, or you can just copy paste the project into htdocs-like folder (in xampp))
-3. Now just go localhost:8000 and start the thing
+1. Start the agent server with `uvicorn python.agent:app --host 127.0.0.1 --port 8001`.
+2. In a separate terminal, serve the frontend with `python -m http.server 8000`.
+3. Open `http://127.0.0.1:8000` in your browser. The frontend sends requests directly to the agent at `http://127.0.0.1:8001/chat`.
 4. **remember** : this chatbot doesn't have Long-Term chat history context (i wanted to keep it simple), you can use your own RAG pipeline for that.
    <br> <br>
 ## Adding Tools
