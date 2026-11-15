@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from langfuse import Evaluation, get_client
 from openai import OpenAI
 
-from python.agent import Agent, MODEL
+from src.agent import Agent, MODEL
 
 from rapidfuzz import fuzz
 

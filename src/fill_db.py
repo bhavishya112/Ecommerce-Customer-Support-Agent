@@ -1,10 +1,10 @@
 """Populate Qdrant collections from the online_store MariaDB products table."""
 
-from python.db_connection import get_embeddings
+from src.db_connection import get_embeddings
 import re
 from uuid import NAMESPACE_URL, uuid5
 
-from python.db_connection import create_connection, create_qdrant_connection
+from src.db_connection import create_connection, create_qdrant_connection
 
 try:
     from qdrant_client.models import Distance, PointStruct, VectorParams

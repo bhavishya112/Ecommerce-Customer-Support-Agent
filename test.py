@@ -200,11 +200,11 @@
 #     time.sleep(0.5)
 #     emit("thinking", {"token": "fucker"})
 
-from python.tools import ProductQuery, PriceFilter
-from python.tools import search_products, _vector_matches_for_field
+from src.tools import ProductQuery, PriceFilter
+from src.tools import search_products, _vector_matches_for_field
 import json
-from python.fill_db import fetch_product_field_values
-from python.db_connection import create_qdrant_connection, create_connection
+from src.fill_db import fetch_product_field_values
+from src.db_connection import create_qdrant_connection, create_connection
 mariadbclient = create_connection()
 vectordbclient = create_qdrant_connection()
 

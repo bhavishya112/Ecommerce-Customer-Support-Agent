@@ -1,5 +1,5 @@
 from __future__ import annotations
-from python.fill_db import FIELD_COLLECTIONS
+from src.fill_db import FIELD_COLLECTIONS
 from pydantic import BaseModel, ConfigDict
 from enum import Enum
 from langfuse import observe
@@ -15,7 +15,7 @@ from ddgs import DDGS
 from openai import OpenAI
 from pymysql import Error
 from pymysql.cursors import DictCursor
-from python.db_connection import create_connection, create_qdrant_connection, get_embeddings
+from src.db_connection import create_connection, create_qdrant_connection, get_embeddings
 
 from langchain.tools import tool
 

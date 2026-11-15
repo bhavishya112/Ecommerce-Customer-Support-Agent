@@ -1,2 +1,2 @@
 [tool.vercel]
-entrypoint = "python.agent:app"
+entrypoint = "src.agent:app"

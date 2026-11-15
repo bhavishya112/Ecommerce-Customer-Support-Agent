@@ -16,14 +16,14 @@ Requires:
 
 from openai import OpenAI
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from python.db_connection import create_qdrant_connection
+from src.db_connection import create_qdrant_connection
 import uuid
 import json
 import argparse
 import logging
 import traceback
-from python.make_readable import color_readable
-from python.db_connection import get_embeddings
+from src.make_readable import color_readable
+from src.db_connection import get_embeddings
 logger = logging.getLogger(__name__)
 
 

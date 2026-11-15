@@ -17,7 +17,7 @@ from langgraph.graph import END, START, StateGraph
 from langchain.tools import BaseTool
 from langfuse import observe, propagate_attributes, get_client
 import pprint
-from python.tools import web_search, query_ui, get_order, get_product, search_products
+from src.tools import web_search, query_ui, get_order, get_product, search_products
 import time
 import uuid
 
