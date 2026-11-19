@@ -6,9 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chatbot</title>
     <!-- Marked.js for Markdown parsing -->
-    <script src="md_parser/marked.min.js"></script>
+    <script src="../md_parser/marked.min.js"></script>
     <!-- DOMPurify for XSS protection -->
-    <script src="md_parser/purify.min.js"></script>
+    <script src="../md_parser/purify.min.js"></script>
 
     <style>
         * {
@@ -45,6 +45,7 @@
         .chat-messages {
             flex: 1;
             overflow-y: auto;
+            position: relative;
             padding: 20px;
             background: #161b22;
             border-radius: 12px;
@@ -248,17 +249,24 @@
 
         .input-area {
             display: flex;
+            align-items: flex-end;
             gap: 10px;
         }
 
         #queryInput {
             flex: 1;
+            min-height: 52px;
+            max-height: 160px;
+            resize: none;
+            overflow-y: hidden;
             padding: 14px 18px;
             background: #21262d;
             border: 1px solid #30363d;
             border-radius: 12px;
             color: #c9d1d9;
             font-size: 16px;
+            font-family: inherit;
+            line-height: 1.4;
             outline: none;
         }
 
@@ -292,17 +300,22 @@
         }
 
         .error-msg {
-            flex-direction: column;
             color: #f85149;
             padding: 10px;
-            position:relative;
-            top:50%;
-            left:50%;
-            margin:auto;
-            /* margin-top: 10px; */
+            position: absolute;
+            top: 50%;
+            left: 20px;
+            right: 20px;
+            max-width: calc(100% - 40px);
+            max-height: calc(100% - 40px);
+            margin: 0 auto;
+            transform: translateY(-50%);
+            overflow: auto;
             background: rgba(248, 81, 73, 0.1);
             border-radius: 8px;
             display: none;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
         }
 
         /* Code block copy button */
@@ -357,12 +370,47 @@
             max-height: 0;
         }
 
+.logo-container {
+    display: flex;
+    justify-content: center;   /* keeps the logo centered */
+}
+
+.logo-text {
+    display: inline-block;     /* width shrinks to fit the "Sierra" text */
+}
+
+.mountain {
+    display: block;
+    width: 100%;               /* matches the width of the name */
+    height: 18px;              /* adjust to make the peaks taller or flatter */
+    margin-bottom: 4px;
+}
+
+.logo-text h1 {
+    margin: 0;
+}
+
+
     </style>
 </head>
 
 <body>
-    <div class="chat-container">
-        <h1>🪄 Grimoire AI </h1>
+        <div class="chat-container">
+            <div class="logo-container">
+                <div class="logo-text">
+                    <svg class="mountain" viewBox="0 0 120 20" preserveAspectRatio="none">
+                        <path d="M2 18 L22 8 L38 13 L58 3 L78 11 L98 5 L118 14"
+                            fill="none"
+                            stroke="#D9A066"
+                            stroke-width="2.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            vector-effect="non-scaling-stroke"/>
+                    </svg>
+
+                    <h1>Sierra</h1>
+                </div>
+            </div>
         
         <div class="chat-messages" id="chatMessages">
             <div class="error-msg" id="errorMsg"></div>
@@ -370,7 +418,7 @@
         
         
         <div class="input-area">
-            <input type="text" id="queryInput" placeholder="Ask anything..." autocomplete="off">
+            <textarea id="queryInput" rows="1" placeholder="Ask anything..." autocomplete="off"></textarea>
             <button id="sendBtn" onclick="sendQuery()">Send</button>
         </div>
 
@@ -398,9 +446,20 @@
             mangle: false
         });
 
-        queryInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendQuery();
+        queryInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                e.preventDefault();
+                sendQuery();
+            }
         });
+        queryInput.addEventListener('input', resizeQueryInput);
+
+        function resizeQueryInput() {
+            queryInput.style.height = 'auto';
+            const height = Math.min(queryInput.scrollHeight, 160);
+            queryInput.style.height = `${height}px`;
+            queryInput.style.overflowY = queryInput.scrollHeight > 160 ? 'auto' : 'hidden';
+        }
         // console.log("isUserScrolling : " + isUserScrolling(chatMessages));
 
         function addMessage(text, isUser,isAssistant) {
@@ -527,11 +586,24 @@
             });
         }
 
-        function showError(text) {
-            errorMsg.textContent = text;
+        function formatError(error) {
+            if (typeof error === 'string') return error;
+            if (!error || typeof error !== 'object') return String(error);
+
+            const parts = [];
+            if (error.type) parts.push(`Type: ${error.type}`);
+            if (error.message) parts.push(error.message);
+            if (!error.message && error.token) parts.push(error.token);
+            if (error.traceback) parts.push(`Traceback:\n${error.traceback}`);
+            return parts.length ? parts.join('\n') : JSON.stringify(error, null, 2);
+        }
+
+        function showError(error) {
+            const message = formatError(error);
+            errorMsg.textContent = errorMsg.textContent
+                ? `${errorMsg.textContent}\n\n${message}`
+                : message;
             errorMsg.style.display = 'block';
-            // msgDiv.appendChild(errorMsg);
-            // setTimeout(() => errorMsg.style.display = 'none', 5000);
         }
 
         function stopStreaming() {
@@ -580,7 +652,6 @@ async function sendQuery() {
     header.onclick = () => execution.classList.toggle("collapsed");
 
     execution.append(header, content);
-    chatMessages.appendChild(execution);
     const query = queryInput.value.trim();
     if (!query) return;
 
@@ -591,6 +662,9 @@ async function sendQuery() {
     
     addMessage(query, true, false);
     queryInput.value = '';
+    resizeQueryInput();
+    errorMsg.textContent = '';
+    errorMsg.style.display = 'none';
 
     chatMessages.appendChild(execution);
 
@@ -618,9 +692,9 @@ async function sendQuery() {
             const errorText = await response.text();
             try {
                 const payload = JSON.parse(errorText);
-                showError(payload.error || `Server error ${response.status}`);
+                showError(payload.error || payload.detail || payload);
             } catch {
-                showError(`Server error ${response.status}`);
+                showError(errorText || `Server error ${response.status}`);
             }
             return; // finally block below handles cleanup
         }
@@ -662,8 +736,8 @@ async function sendQuery() {
                 
                 if (eventName === 'error') {
                     const err = JSON.parse(data);
-                    showError(err.token);
-                    return;
+                    showError(err);
+                    continue;
                 }
 
                 if (eventName === 'thinking') {
@@ -679,8 +753,16 @@ async function sendQuery() {
                     
                 }
 
+                if (eventName === 'tool_result' && data) {
+                    const toolResult = JSON.parse(data);
+                    const result = toolResult.result;
+                    if (result?.status === 'error' || toolResult.error) {
+                        showError(result?.error || toolResult.error || result);
+                    }
+                }
+
                 if (eventName === 'done') {
-                    return;
+                    break;
                 }
 
                 if (eventName === 'message' && data) {
@@ -690,7 +772,7 @@ async function sendQuery() {
 
                     if (chunk && chunk.error) {
                         showError(chunk.error);
-                        return;
+                        continue;
                     }
 
                     const textToken = typeof chunk === 'string' ? chunk : chunk?.token || chunk?.content || '';
@@ -701,7 +783,7 @@ async function sendQuery() {
                     }
 
                     if (chunk && chunk.done) {
-                        return;
+                        break;
                     }
                 }
             }

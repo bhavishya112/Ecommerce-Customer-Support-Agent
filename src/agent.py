@@ -8,7 +8,8 @@ import sys
 import json
 import asyncio
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi import Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Callable, Literal, TypedDict
@@ -71,6 +72,17 @@ logger2.addHandler(nodes_handler)
 logger2.propagate = False
 
 # ============================================================================================
+
+SHOW_ERROR_TRACEBACKS = environ.get(
+    "SHOW_ERROR_TRACEBACKS", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _error_details(error: Exception) -> dict[str, str]:
+    details = {"type": type(error).__name__, "message": str(error)}
+    if SHOW_ERROR_TRACEBACKS:
+        details["traceback"] = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__))
+    return details
 
 
 class QueueEmitter:
@@ -321,7 +333,7 @@ async def run_tool(tool_name: str, **args: Any) -> dict[str, Any]:
             result = {
                 "status": "error",
                 "data": None,
-                "error": {"type": type(error).__name__, "message": str(error)},
+                "error": _error_details(error),
             }
 
     latency_ms = round((time.perf_counter() - started_at) * 1000, 3)
@@ -388,6 +400,12 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, error: Exception):
+    logger.exception("Unhandled backend request error for %s", request.url.path)
+    return JSONResponse(status_code=500, content={"error": _error_details(error)})
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     """Main Gate for the python server, From here all User-Agent Communication happens"""
@@ -404,6 +422,7 @@ async def chat(req: ChatRequest):
                     f"data: {json.dumps(event['data'], ensure_ascii=False,default=str)}\n\n"
                 )
                 if event["event"] == "done":
+                    await agent_task
                     break
         finally:
             if not agent_task.done():
@@ -713,13 +732,13 @@ async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Calla
                             "Tool arguments must be a JSON object")
                     return await _run_tool_async(tool_call["name"], arguments)
                 except Exception as error:
+                    error_details = _error_details(error)
                     return {
                         "name": tool_call["name"],
                         "arguments": tool_call["arguments"],
                         "status": "error",
-                        "result": {"status": "error", "data": None, "error": {
-                            "type": type(error).__name__, "message": str(error)}},
-                        "error": {"type": type(error).__name__, "message": str(error)},
+                        "result": {"status": "error", "data": None, "error": error_details},
+                        "error": error_details,
                         "latency_ms": 0.0,
                     }
 
@@ -741,8 +760,16 @@ async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Calla
                     _add_to_evaluation_view(result["evaluation"], tool_record)
                     emit("tool_result", {
                          "name": tool_call["name"], "result": tool_record["result"]})
+                    tool_result_for_model = tool_record["result"]
+                    tool_error = tool_result_for_model.get("error")
+                    if isinstance(tool_error, dict) and "traceback" in tool_error:
+                        tool_result_for_model = {
+                            **tool_result_for_model,
+                            "error": {key: value for key, value in tool_error.items()
+                                      if key != "traceback"},
+                        }
                     add_or_update_conv([{"role": "tool", "tool_call_id": tool_call["id"], "name": tool_call["name"], "content": json.dumps(
-                        tool_record["result"], default=str)}], request.user_id, request.conv_id)
+                        tool_result_for_model, default=str)}], request.user_id, request.conv_id)
 
                 return {"calls": state["calls"] + tool_call_records}
 
@@ -780,9 +807,10 @@ async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Calla
         logger.exception(
             f"📜📜 CONVERSATIONS : {json.dumps(CONVERSATIONS.get(request.user_id,{}).get(request.conv_id),indent=4)} ")
         logger.exception("agent execution failed")
-        errors.append({"type": type(error).__name__, "message": str(error)})
+        error_details = _error_details(error)
+        errors.append(error_details)
         termination_reason = "error"
-        emit("error", {"token": str(error)})
+        emit("error", {"token": str(error), **error_details})
     finally:
         usage_records = [record["usage"]
                          for record in llm_requests if record["usage"]]
