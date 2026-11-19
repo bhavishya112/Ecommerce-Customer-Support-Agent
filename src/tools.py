@@ -7,6 +7,7 @@ from langfuse import observe
 import base64
 import json
 import logging
+import traceback
 from typing import Any, Literal, Optional
 from decimal import Decimal
 
@@ -23,6 +24,8 @@ from dotenv import load_dotenv
 from os import getenv
 
 load_dotenv(".env")
+SHOW_ERROR_TRACEBACKS = getenv(
+    "SHOW_ERROR_TRACEBACKS", "").lower() in {"1", "true", "yes", "on"}
 NIM_BASE_URL = getenv("NIM_BASE_URL")
 NIM_API_KEY = getenv("NIM_API_KEY")
 
@@ -42,7 +45,14 @@ def _success(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _failure(error: Exception | str, error_type: str | None = None) -> dict[str, Any]:
-    return {"status": "error", "data": None, "error": {"type": error_type or type(error).__name__, "message": str(error)}}
+    details = {
+        "type": error_type or type(error).__name__,
+        "message": str(error),
+    }
+    if isinstance(error, Exception) and SHOW_ERROR_TRACEBACKS:
+        details["traceback"] = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__))
+    return {"status": "error", "data": None, "error": details}
 
 
 summarize_client = OpenAI(

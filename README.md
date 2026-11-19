@@ -79,6 +79,7 @@ To use the project, you'll have to do some preprocessing (if you want to use the
    
 ## Step 2.
 1. Start the agent server with `uvicorn python.agent:app --host 127.0.0.1 --port 8001`.
+   Set `SHOW_ERROR_TRACEBACKS=true` in the server environment to display backend tracebacks in the chat error box; leave it unset in production unless traceback disclosure is intended.
 2. In a separate terminal, serve the frontend with `python -m http.server 8000`.
 3. Open `http://127.0.0.1:8000` in your browser. The frontend sends requests directly to the agent at `http://127.0.0.1:8001/chat`.
 4. **remember** : this chatbot doesn't have Long-Term chat history context (i wanted to keep it simple), you can use your own RAG pipeline for that.
