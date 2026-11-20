@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 import os
 from os import environ
 import fastapi
@@ -402,7 +404,8 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, error: Exception):
-    logger.exception("Unhandled backend request error for %s", request.url.path)
+    logger.exception("Unhandled backend request error for %s",
+                     request.url.path)
     return JSONResponse(status_code=500, content={"error": _error_details(error)})
 
 
@@ -435,9 +438,13 @@ async def chat(req: ChatRequest):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
+app.mount("/", StaticFiles(directory=PUBLIC_DIR, html=True), name="public")
+
 # ======================================================================================================================
 #                                               AGENT
 # ======================================================================================================================
+
 
 def _normalize_request(req: ChatRequest | str | dict[str, Any]) -> ChatRequest:
     """Allow production requests and isolated benchmark inputs to share Agent."""

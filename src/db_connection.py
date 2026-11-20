@@ -38,7 +38,6 @@ def create_connection():
     finally:
         if connection and not connection.open:
             print("⚠️ Connection could not be established.")
-            return None
 
     return None
 
