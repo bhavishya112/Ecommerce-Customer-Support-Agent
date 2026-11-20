@@ -7,6 +7,7 @@ from qdrant_client import QdrantClient
 import openai
 import numpy as np
 from dotenv import load_dotenv
+import certifi
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -19,14 +20,17 @@ def create_connection():
     connection = None
     try:
         connection = pymysql.connect(
-            host="localhost",
-            user="root",
-            password="",  # Leave empty if no password
-            database="online_store",
-            cursorclass=pymysql.cursors.DictCursor,  # Optional: returns rows as dicts
-            autocommit=False,  # Optional: you can change this
+            host=os.environ["DB_HOST"],
+            port=int(os.environ.get("DB_PORT", 3306)),
+            user=os.environ["DB_USER"],
+            password=os.environ["DB_PASSWORD"],
+            database=os.environ["DB_NAME"],
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=False,
+            ssl_ca=certifi.where(),
+            ssl_verify_cert=True,
+            ssl_verify_identity=True,
         )
-
         if connection.open:
             print("✅ Connected successfully to MariaDB 'online_store' using PyMySQL.")
             return connection
@@ -51,8 +55,8 @@ def create_qdrant_connection():
         return None
 
     try:
-        qdrant_url = os.getenv("QDRANT_BASE_URL")
-        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        qdrant_url = os.environ["QDRANT_BASE_URL"]
+        qdrant_api_key = os.environ["QDRANT_API_KEY"]
 
         if not qdrant_url or not qdrant_api_key:
             raise ValueError(
@@ -68,8 +72,8 @@ def create_qdrant_connection():
         return None
 
 
-NIM_API_KEY = os.getenv("NIM_API_KEY")
-NIM_BASE_URL = os.getenv("NIM_BASE_URL")
+NIM_API_KEY = os.environ["NIM_API_KEY"]
+NIM_BASE_URL = os.environ["NIM_BASE_URL"]
 EMB_MODEL = "nvidia/nemotron-3-embed-1b"
 
 emb_client = openai.OpenAI(

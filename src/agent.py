@@ -663,9 +663,9 @@ async def Agent(model: str, req: ChatRequest | str | dict[str, Any], emit: Calla
         # if not langfuse.auth_check():
         #     print("🧹Langfuse Not Connected!")
         #     raise Exception("Langfuse not connected")
-        print("PUBLIC:", os.getenv("LANGFUSE_PUBLIC_KEY"))
-        print("SECRET:", bool(os.getenv("LANGFUSE_SECRET_KEY")))
-        print("BASE URL:", os.getenv("LANGFUSE_BASE_URL"))
+        print("PUBLIC:", os.environ["LANGFUSE_PUBLIC_KEY"])
+        print("SECRET:", bool(os.environ["LANGFUSE_SECRET_KEY"]))
+        print("BASE URL:", os.environ["LANGFUSE_BASE_URL"])
         with propagate_attributes(
             user_id=str(request.user_id),
             session_id=str(request.conv_id),

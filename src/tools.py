@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict
 from enum import Enum
 from langfuse import observe
 
+import os
 import base64
 import json
 import logging
@@ -22,13 +23,12 @@ from src.db_connection import create_connection, create_qdrant_connection, get_e
 from langchain.tools import tool
 
 from dotenv import load_dotenv
-from os import getenv
 
 load_dotenv(".env")
-SHOW_ERROR_TRACEBACKS = getenv(
+SHOW_ERROR_TRACEBACKS = os.getenv(
     "SHOW_ERROR_TRACEBACKS", "").lower() in {"1", "true", "yes", "on"}
-NIM_BASE_URL = getenv("NIM_BASE_URL")
-NIM_API_KEY = getenv("NIM_API_KEY")
+NIM_BASE_URL = os.environ["NIM_BASE_URL"]
+NIM_API_KEY = os.environ["NIM_API_KEY"]
 
 
 logger = logging.getLogger("tools")
