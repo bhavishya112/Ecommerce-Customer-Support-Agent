@@ -46,7 +46,7 @@ logger.setLevel(logging.INFO)
 # logger2 = logging.getLogger("model_node")
 # logger2.setLevel(logging.DEBUG)
 
-handler = logging.FileHandler("logs/agent.log", encoding="utf-8")
+handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s",
     datefmt="%d %B %H:%M %p"
@@ -62,7 +62,7 @@ logger.propagate = False
 logger2 = logging.getLogger("model_node")
 logger2.setLevel(logging.DEBUG)
 
-nodes_handler = logging.FileHandler("logs/nodes.log", encoding="utf-8")
+nodes_handler = logging.StreamHandler(sys.stdout)
 nodes_handler.setFormatter(logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s",
     datefmt="%d %B %I:%M %p"

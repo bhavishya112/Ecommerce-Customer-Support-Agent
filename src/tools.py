@@ -7,6 +7,7 @@ from langfuse import observe
 import base64
 import json
 import logging
+import sys
 import traceback
 from typing import Any, Literal, Optional
 from decimal import Decimal
@@ -33,7 +34,7 @@ NIM_API_KEY = getenv("NIM_API_KEY")
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
-    handler = logging.FileHandler("logs/tools.log", encoding="utf-8")
+    handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter(
         "%(asctime)s %(levelname)s %(message)s", datefmt="%d %B %I:%M %p"))
     logger.addHandler(handler)

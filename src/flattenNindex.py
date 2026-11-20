@@ -21,6 +21,7 @@ import uuid
 import json
 import argparse
 import logging
+import sys
 import traceback
 from src.make_readable import color_readable
 from src.db_connection import get_embeddings
@@ -29,8 +30,7 @@ logger = logging.getLogger(__name__)
 
 # ----------------------------------------LOGGER----------------------------------------
 logging.basicConfig(
-    filename="logs/index_ui.log",
-    filemode="a",  # 'a' appends new logs; 'w' overwrites each run
+    stream=sys.stdout,
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(filename)s - %(message)s",
     datefmt="%H:%M %d %B",
